@@ -257,7 +257,39 @@ sections, Units, Systems, Check, Layout plan, 3D plan. The last two are
 picture sheets — `drawingXml()` plus `xl/media/imageN.png`, anchored below
 their caption rows.
 
+**The PDF has to read as a document, not as a web page printed out.** The
+rules that keep it that way, all in the report's own `<style>` block:
+
+- **The `@page` margin is the trim and nothing may touch it.** The body
+  carries its own gutter on top of it. Text running into the edge of the
+  sheet is the single thing that made it look amateur.
+- **Prose is held to a measure** (`.lede`, `.warn`, `.endnote`, captions).
+  A line of body text 400 mm wide is unreadable; tables and plates are the
+  only things that get the full width.
+- **Tables cap at 330 mm and numeric columns are `width: 1%`**, so the
+  figures stay tight under their headings and the slack falls into the text
+  columns rather than being shared out into a scatter across the sheet.
+- **A column marked `opt` is dropped when every cell in it is blank.**
+  Liquid, gas, HP gas, note, heating kW and room are empty until someone
+  types them in, and four empty columns across an A3 sheet is a third of the
+  table saying nothing. `repTable()` does this — build a table as columns and
+  rows of strings and it comes for free.
+- **The running footer is `position: fixed`**, which Chrome repeats on every
+  printed page. It sits at the foot of the content box, inside both margins,
+  and the body's bottom padding keeps the content off it. It is hidden on
+  screen, because a fixed bar over a scrolling preview reads as a mistake.
+- **No plate may be taller than the page.** `figure img` is capped to 218 mm
+  so `break-inside: avoid` can actually keep it whole; without the cap a tall
+  plan is simply sliced across two sheets.
+
 Two things about the pictures:
+
+- `planCrop()` cuts the layout plate down to what was actually traced, plus a
+  margin big enough for the labels that hang off it, so the plate is the
+  take-off rather than a sheet of empty paper with the job in one corner. A
+  trace already covering most of the sheet is left alone. `planImage()`
+  resolves `{ url, w, h }` because the crop changes the size and the workbook
+  needs the real figures to anchor its picture.
 
 - `planImage()` re-renders the overlay **at a fixed zoom**, not whatever the
   screen happens to be at, so labels come out the same size every time; it

@@ -3553,26 +3553,64 @@ function planImage() {
     zoom = savedZoom; sel = savedSel; hoverPt = savedHover;
     applyZoom(); render();
 
+    /* Cropped to what was actually traced, plus a generous margin, so the
+       plate is the take-off rather than a sheet of empty paper with the job
+       in one corner. A trace that already fills the sheet is left alone. */
+    const crop = planCrop();
     const cv = document.createElement('canvas');
-    cv.width = S.img.w; cv.height = S.img.h;
+    cv.width = crop.w; cv.height = crop.h;
     const ctx = cv.getContext('2d');
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, cv.width, cv.height);
 
     const base = new Image();
     base.onload = () => {
-      ctx.drawImage(base, 0, 0, cv.width, cv.height);
+      ctx.drawImage(base, -crop.x, -crop.y, S.img.w, S.img.h);
       const over = new Image();
       over.onload = () => {
-        ctx.drawImage(over, 0, 0);
-        try { resolve(cv.toDataURL('image/png')); } catch (e) { reject(e); }
+        ctx.drawImage(over, -crop.x, -crop.y);
+        try { resolve({ url: cv.toDataURL('image/png'), w: crop.w, h: crop.h }); }
+        catch (e) { reject(e); }
       };
-      over.onerror = () => { try { resolve(cv.toDataURL('image/png')); } catch (e) { reject(e); } };
+      over.onerror = () => {
+        try { resolve({ url: cv.toDataURL('image/png'), w: crop.w, h: crop.h }); }
+        catch (e) { reject(e); }
+      };
       over.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
     };
     base.onerror = () => reject(new Error('the drawing could not be read back'));
     base.src = S.img.src;
   });
+}
+
+/* The box the plan plate is cut from: everything traced, everything placed
+   and the calibration line, grown by a margin big enough to carry the labels
+   that hang off them. Falls back to the whole sheet when the take-off already
+   covers most of it, or when there is nothing on it yet. */
+function planCrop() {
+  const full = { x: 0, y: 0, w: S.img.w, h: S.img.h };
+  const xs = [], ys = [];
+  S.nodes.forEach(n => {
+    const b = unitBox(n, 1);
+    const half = unitHalf(b);
+    xs.push(n.x - half.x, n.x + half.x);
+    ys.push(n.y - half.y, n.y + half.y);
+  });
+  S.segs.forEach(sg => sg.pts.forEach(p => { xs.push(p.x); ys.push(p.y); }));
+  if (S.calib) { xs.push(S.calib.a.x, S.calib.b.x); ys.push(S.calib.a.y, S.calib.b.y); }
+  if (xs.length < 2) return full;
+
+  let x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+  let y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+  // room for the names, duties and section labels drawn beside everything
+  const pad = Math.max(60, Math.max(x1 - x0, y1 - y0) * 0.10, S.pxPerM > 0 ? S.pxPerM * 2 : 0);
+  x0 = Math.max(0, Math.floor(x0 - pad)); y0 = Math.max(0, Math.floor(y0 - pad));
+  x1 = Math.min(S.img.w, Math.ceil(x1 + pad)); y1 = Math.min(S.img.h, Math.ceil(y1 + pad));
+  const w = x1 - x0, h = y1 - y0;
+  if (w < 40 || h < 40) return full;
+  // not worth cropping if it barely trims anything
+  if (w > S.img.w * 0.88 && h > S.img.h * 0.88) return full;
+  return { x: x0, y: y0, w, h };
 }
 
 function image3D(w, h, view, ex) {
@@ -3625,7 +3663,7 @@ async function buildReport() {
   toast('Building the report…');
 
   let planSrc = '', isoSrc = '', frontSrc = '';
-  try { planSrc = await planImage(); } catch (e) { planSrc = ''; }
+  try { planSrc = (await planImage()).url; } catch (e) { planSrc = ''; }
   try {
     V3.model = build3D();
     isoSrc = image3D(1000, 620, 'iso', 1);
@@ -3637,27 +3675,62 @@ async function buildReport() {
   } catch (e) {}
 
   const a = auditTake();
-  const rowsFor = segs => segs.slice()
-    .sort((x, y) => String(x.ref).localeCompare(String(y.ref), 'en', { numeric: true }))
-    .map(sg => {
-      const up = nodeById(sg.up != null ? sg.up : sg.a);
-      const dn = nodeById(sg.down != null ? sg.down : sg.b);
-      const hs = heightsOf(sg);
-      const hi = Math.max.apply(null, hs), lo = Math.min.apply(null, hs);
-      return '<tr><td><b>' + esc(segName(sg)) + '</b></td>'
-        + '<td>' + esc(up ? (up.name || nodeWord(up)) : '—') + '</td>'
-        + '<td>' + esc(dn ? (dn.name || nodeWord(dn)) : '—') + '</td>'
-        + '<td class="n">' + sg.pipes + '</td>'
-        + '<td class="n">' + fmt(sg.routeM, 2) + '</td>'
-        + '<td class="n">' + fmt(sg.riseM, 2) + '</td>'
-        + '<td class="n"><b>' + fmt(sg.lengthM, 2) + '</b></td>'
-        + '<td class="n">' + fmt(sg.pipeM, 2) + '</td>'
-        + '<td class="n">' + (Math.abs(hi - lo) < 0.005 ? fmt(hi, 2) : fmt(lo, 2) + '–' + fmt(hi, 2)) + '</td>'
-        + '<td>' + esc(sg.sizeLiquid || '') + '</td>'
-        + '<td>' + esc(sg.sizeGas || '') + '</td>'
-        + '<td>' + esc(sg.sizeHp || '') + '</td>'
-        + '<td>' + esc(sg.note || '') + '</td></tr>';
-    }).join('');
+
+  /* The line-size and note columns are empty until someone has typed the
+     manufacturer's selection in, and four empty columns across an A3 sheet
+     is a third of the table saying nothing. A column marked `opt` is dropped
+     when every cell in it is blank, so the table is always as wide as it has
+     something to say and no wider. */
+  const sectionCols = [
+    { h: 'Section', cls: 'key' },
+    { h: 'From', cls: 'dim' }, { h: 'To', cls: 'dim' },
+    { h: 'Pipes', n: true }, { h: 'Plan m', n: true }, { h: 'Rise m', n: true },
+    { h: 'One way m', n: true, strong: true }, { h: 'Pipe m', n: true },
+    { h: 'Height m', n: true },
+    { h: 'Liquid', n: true, opt: true }, { h: 'Gas', n: true, opt: true },
+    { h: 'HP gas', n: true, opt: true }, { h: 'Note', opt: true },
+  ];
+  const sectionRow = sg => {
+    const up = nodeById(sg.up != null ? sg.up : sg.a);
+    const dn = nodeById(sg.down != null ? sg.down : sg.b);
+    const hs = heightsOf(sg);
+    const hi = Math.max.apply(null, hs), lo = Math.min.apply(null, hs);
+    return [segName(sg),
+      up ? (up.name || nodeWord(up)) : '—', dn ? (dn.name || nodeWord(dn)) : '—',
+      String(sg.pipes), fmt(sg.routeM, 2), fmt(sg.riseM, 2), fmt(sg.lengthM, 2), fmt(sg.pipeM, 2),
+      (Math.abs(hi - lo) < 0.005 ? fmt(hi, 2) : fmt(lo, 2) + '–' + fmt(hi, 2)),
+      sg.sizeLiquid || '', sg.sizeGas || '', sg.sizeHp || '', sg.note || ''];
+  };
+  const sortedSegs = segs => segs.slice()
+    .sort((x, y) => String(x.ref).localeCompare(String(y.ref), 'en', { numeric: true }));
+
+  /* cols, rows of plain strings, and an optional footer row. Anything the
+     columns drop is dropped from the footer with them. */
+  function repTable(cols, rows, footer) {
+    const keep = cols.map((c, i) => !c.opt || rows.some(r => String(r[i] || '').trim() !== ''));
+    const th = cols.filter((c, i) => keep[i])
+      .map(c => '<th' + (c.n ? ' class="n"' : '') + '>' + esc(c.h) + '</th>').join('');
+    const body = rows.map(r => '<tr>' + cols.filter((c, i) => keep[i]).map(c => {
+      const v = r[cols.indexOf(c)];
+      const cls = [c.n ? 'n' : '', c.cls || ''].filter(Boolean).join(' ');
+      const inner = c.strong ? '<b>' + esc(v) + '</b>' : esc(v);
+      return '<td' + (cls ? ' class="' + cls + '"' : '') + '>' + inner + '</td>';
+    }).join('') + '</tr>').join('');
+    let foot = '';
+    if (footer) {
+      foot = '<tfoot><tr>' + cols.filter((c, i) => keep[i]).map((c, j) => {
+        const v = footer[cols.indexOf(c)];
+        return '<td' + (c.n ? ' class="n"' : '') + '>' + (v === undefined ? '' : esc(v)) + '</td>';
+      }).join('') + '</tr></tfoot>';
+    }
+    return '<table class="rep"><thead><tr>' + th + '</tr></thead><tbody>' + body + '</tbody>' + foot + '</table>';
+  }
+  const sectionTable = segs => repTable(sectionCols, sortedSegs(segs).map(sectionRow),
+    ['Total', '', '', '',
+     fmt(segs.reduce((x, g) => x + g.routeM, 0), 2),
+     fmt(segs.reduce((x, g) => x + g.riseM, 0), 2),
+     fmt(segs.reduce((x, g) => x + g.lengthM, 0), 2),
+     fmt(segs.reduce((x, g) => x + g.pipeM, 0), 2)]);
 
   const sysBlocks = (S.systems || []).map(st => {
     const issues = systemIssues(st);
@@ -3677,33 +3750,26 @@ async function buildReport() {
       + (issues.length
           ? '<div class="warn"><b>Check</b><ul>' + issues.map(m => '<li>' + esc(m) + '</li>').join('') + '</ul></div>'
           : '')
-      + '<table class="rep"><thead><tr><th>Section</th><th>From</th><th>To</th><th class="n">Pipes</th>'
-      + '<th class="n">Plan m</th><th class="n">Rise m</th><th class="n">One way m</th>'
-      + '<th class="n">Pipe m</th><th class="n">Height m</th><th>Liquid</th><th>Gas</th><th>HP gas</th><th>Note</th>'
-      + '</tr></thead><tbody>' + rowsFor(st.segs)
-      + '</tbody><tfoot><tr><td colspan="4">Total</td>'
-      + '<td class="n">' + fmt(st.totalPlanM, 2) + '</td>'
-      + '<td class="n">' + fmt(st.totalRiseM, 2) + '</td>'
-      + '<td class="n">' + fmt(st.totalRouteM, 2) + '</td>'
-      + '<td class="n">' + fmt(st.totalPipeM, 2) + '</td>'
-      + '<td colspan="5"></td></tr></tfoot></table>'
-      + '<table class="rep"><thead><tr><th>Indoor unit</th><th>Type</th><th>Model</th>'
-      + '<th class="n">Cooling kW</th><th class="n">Heating kW</th><th class="n">Height m</th>'
-      + '<th class="n">Footprint m</th><th class="n">Pipe run m</th><th>Route</th><th>Room</th>'
-      + '</tr></thead><tbody>'
-      + st.runs.slice().sort((x, y) => y.lengthM - x.lengthM).map(r =>
-          '<tr><td><b>' + esc(r.unit.name) + '</b></td>'
-          + '<td>' + esc((INDOOR_TYPES[r.unit.unit] || {}).label || '') + '</td>'
-          + '<td>' + esc(r.unit.model || '') + '</td>'
-          + '<td class="n">' + fmt(indoorKw(r.unit), 1) + '</td>'
-          + '<td class="n">' + fmt(parseFloat(r.unit.kwHeat) || 0, 1) + '</td>'
-          + '<td class="n">' + fmt(heightOf(r.unit), 2) + '</td>'
-          + '<td class="n">' + fmt(unitFoot(r.unit).w, 2) + ' × ' + fmt(unitFoot(r.unit).d, 2)
-          + (unitFoot(r.unit).rot ? ' @' + fmt(unitFoot(r.unit).rot, 0) + '°' : '') + '</td>'
-          + '<td class="n"><b>' + fmt(r.lengthM, 2) + '</b></td>'
-          + '<td class="dim">' + r.path.map(s => esc(segName(s))).join(' → ') + '</td>'
-          + '<td>' + esc(r.unit.room || '') + '</td></tr>').join('')
-      + '</tbody></table></section>';
+      + '<h4>Pipe sections</h4>'
+      + sectionTable(st.segs)
+      + '<h4>Indoor units</h4>'
+      + repTable([
+          { h: 'Indoor unit', cls: 'key' }, { h: 'Type' }, { h: 'Model', opt: true },
+          { h: 'Cooling kW', n: true }, { h: 'Heating kW', n: true, opt: true },
+          { h: 'Height m', n: true }, { h: 'Footprint m', n: true },
+          { h: 'Pipe run m', n: true, strong: true }, { h: 'Route', cls: 'dim' },
+          { h: 'Room', opt: true },
+        ], st.runs.slice().sort((x, y) => y.lengthM - x.lengthM).map(r => {
+          const ft = unitFoot(r.unit);
+          const heat = parseFloat(r.unit.kwHeat) || 0;
+          return [r.unit.name,
+            (INDOOR_TYPES[r.unit.unit] || {}).label || '', r.unit.model || '',
+            fmt(indoorKw(r.unit), 1), heat ? fmt(heat, 1) : '',
+            fmt(heightOf(r.unit), 2),
+            fmt(ft.w, 2) + ' × ' + fmt(ft.d, 2) + (ft.rot ? ' @' + fmt(ft.rot, 0) + '°' : ''),
+            fmt(r.lengthM, 2), r.path.map(segName).join(' → '), r.unit.room || ''];
+        }))
+      + '</section>';
   }).join('');
 
   const loose = S.segs.filter(s => s.orphan);
@@ -3711,62 +3777,122 @@ async function buildReport() {
   return `<!DOCTYPE html><html lang="en-GB"><head><meta charset="utf-8">
 <title>AC Trace — ${esc(h.ref)} — ${esc(h.date)}</title>
 <style>
-  @page { size: A3 landscape; margin: 12mm; }
+  /* ---------------------------------------------------------------
+     A3 landscape, because the wide tables and the layout plan need it.
+     The margin is the trim: nothing may touch it, so the page has its own
+     gutter on top of the @page margin and the running footer sits inside
+     both. Prose is held to a readable measure — a 400 mm line of body text
+     reads like a spreadsheet, not a report.
+     --------------------------------------------------------------- */
+  @page { size: A3 landscape; margin: 14mm 16mm 16mm; }
   * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
   body { font-family: Manrope, system-ui, -apple-system, Segoe UI, sans-serif; color: #22242b;
-         font-size: 10.5px; line-height: 1.45; margin: 0; }
+         font-size: 10px; line-height: 1.5; padding: 0 2mm 14mm; }
   .mono, .n, td.n, th.n { font-family: ui-monospace, 'Azeret Mono', Menlo, Consolas, monospace;
          font-variant-numeric: tabular-nums; }
-  header.rep { border-bottom: 3px solid #7ad1e4; padding-bottom: 9px; margin-bottom: 14px;
-         display: flex; align-items: flex-end; gap: 20px; }
-  header.rep h1 { margin: 0; font-size: 21px; font-weight: 800; letter-spacing: -0.02em; }
-  header.rep .sub { font-size: 10px; color: #6c7ae0; font-weight: 700; letter-spacing: .08em;
-         text-transform: uppercase; margin-bottom: 2px; }
-  header.rep .meta { margin-left: auto; display: grid; grid-template-columns: auto auto;
-         gap: 1px 14px; font-size: 10px; text-align: right; }
-  header.rep .meta b { color: #888c98; font-weight: 500; }
-  h2 { font-size: 14px; margin: 20px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #dcd9dd; }
-  h3 { font-size: 12.5px; margin: 16px 0 7px; }
+
+  /* ---- title block ---- */
+  header.rep { border-bottom: 2px solid #6c7ae0; padding-bottom: 10px; margin-bottom: 16px;
+         display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 24px; }
+  header.rep .eyebrow { font-size: 8.5px; color: #6c7ae0; font-weight: 800; letter-spacing: .16em;
+         text-transform: uppercase; }
+  header.rep h1 { margin: 3px 0 0; font-size: 23px; font-weight: 800; letter-spacing: -0.025em;
+         line-height: 1.1; }
+  header.rep .strap { margin-top: 4px; font-size: 10px; color: #6c7078; }
+  header.rep .meta { display: grid; grid-template-columns: auto auto; gap: 0;
+         font-size: 9.5px; text-align: right; min-width: 78mm; }
+  header.rep .meta dt { color: #888c98; font-weight: 500; padding: 2px 14px 2px 0;
+         border-bottom: 1px solid #eeecf0; }
+  header.rep .meta dd { margin: 0; font-weight: 600; padding: 2px 0;
+         border-bottom: 1px solid #eeecf0; }
+
+  /* ---- running footer: Chrome repeats a fixed block on every printed page ---- */
+  .runfoot { position: fixed; left: 0; right: 0; bottom: 0; height: 8mm;
+         border-top: 1px solid #dcd9dd; padding-top: 3px;
+         display: flex; justify-content: space-between; gap: 16px;
+         font-size: 8px; color: #9a9ea8; letter-spacing: .02em; }
+  .runfoot span { white-space: nowrap; }
+  .runfoot .mid { color: #b6b9c1; }
+
+  /* ---- sections ---- */
+  h2 { font-size: 9px; letter-spacing: .18em; text-transform: uppercase; font-weight: 800;
+         color: #6c7ae0; margin: 22px 0 9px; padding-bottom: 5px;
+         border-bottom: 1px solid #dcd9dd; break-after: avoid; }
+  h2:first-of-type { margin-top: 0; }
+  h3 { font-size: 13px; font-weight: 800; letter-spacing: -0.01em; margin: 18px 0 8px;
+         break-after: avoid; }
+  h3 .sysref { color: #6c7078; font-weight: 600; }
+  h4 { font-size: 10px; margin: 14px 0 5px; break-after: avoid; }
   section.blk { break-inside: auto; }
-  .figs { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0 10px; }
-  .fig { border: 1px solid #c0bcc4; border-radius: 3px; padding: 4px 9px; min-width: 108px; }
-  .fig b { display: block; font-size: 7.5px; letter-spacing: .1em; text-transform: uppercase;
-         color: #888c98; font-weight: 500; font-family: ui-monospace, monospace; }
-  .fig span { font-size: 13px; font-weight: 700; font-family: ui-monospace, 'Azeret Mono', monospace; }
+  .lede { max-width: 215mm; font-size: 10px; color: #4a4d57; margin: 0 0 12px; }
+  .lede b { color: #22242b; }
+
+  /* ---- figure tiles ---- */
+  .figs { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 12px; }
+  .fig { border: 1px solid #d7d4da; border-radius: 3px; padding: 5px 11px 6px; min-width: 116px; }
+  .fig b { display: block; font-size: 7px; letter-spacing: .12em; text-transform: uppercase;
+         color: #888c98; font-weight: 600; font-family: ui-monospace, monospace; }
+  .fig span { font-size: 14px; font-weight: 700; letter-spacing: -0.01em;
+         font-family: ui-monospace, 'Azeret Mono', monospace; }
   .fig.hi { background: #191d26; border-color: #191d26; }
   .fig.hi b { color: #8e97a6; } .fig.hi span { color: #fff; }
-  table.rep { width: 100%; border-collapse: collapse; font-size: 9.5px; margin: 6px 0 12px; }
-  table.rep th { background: #191d26; color: #f4f4f6; text-align: left; padding: 4px 6px;
-         font-size: 8px; letter-spacing: .07em; text-transform: uppercase; font-weight: 600; }
-  table.rep td { padding: 3px 6px; border-bottom: 1px solid #e6e4e8; vertical-align: top; }
-  table.rep td.n, table.rep th.n { text-align: right; font-family: ui-monospace, monospace; }
-  table.rep td.dim { color: #6c7078; }
+
+  /* ---- tables ---- */
+  /* Full width up to a cap. Unbounded on an A3 sheet the text columns take
+     all the slack and a schedule turns into three words and a lot of paper;
+     capped, the numeric columns stay tight against their headings and the
+     block reads as one table. */
+  table.rep { width: 100%; max-width: 330mm; border-collapse: collapse; font-size: 9px;
+         margin: 8px 0 14px; border: 1px solid #d7d4da; }
+  table.rep th { background: #191d26; color: #f4f4f6; text-align: left; padding: 5px 8px;
+         font-size: 7.5px; letter-spacing: .1em; text-transform: uppercase; font-weight: 700;
+         white-space: nowrap; }
+  table.rep td { padding: 4px 8px; border-bottom: 1px solid #ebe9ed; vertical-align: top; }
+  table.rep tbody tr:nth-child(even) td { background: #faf9fb; }
+  table.rep tbody tr:last-child td { border-bottom: none; }
+  table.rep td.n, table.rep th.n { text-align: right; font-family: ui-monospace, monospace;
+         white-space: nowrap; width: 1%; }
+  table.rep th:first-child, table.rep td:first-child { padding-left: 10px; }
+  table.rep th:last-child, table.rep td:last-child { padding-right: 10px; }
+  table.rep td.dim { color: #7a7e88; }
+  table.rep td.key { font-weight: 700; }
   table.rep tfoot td { border-top: 1.5px solid #22242b; border-bottom: none; font-weight: 700;
          background: #f2f1f4; }
   table.rep tr { break-inside: avoid; }
   thead { display: table-header-group; }
-  .warn { border-left: 3px solid #bb3b2e; background: #fdf1ef; padding: 6px 10px; margin: 8px 0;
-         font-size: 9.5px; }
-  .warn b { color: #96271b; display: block; margin-bottom: 2px; }
+
+  /* ---- callouts ---- */
+  .warn, .ok { border-left: 3px solid #bb3b2e; background: #fdf1ef; padding: 7px 11px;
+         margin: 10px 0; font-size: 9.5px; max-width: 260mm; border-radius: 0 2px 2px 0; }
+  .ok { border-left-color: #2f8f5b; background: #f0f8f3; }
+  .warn b { color: #96271b; display: block; margin-bottom: 3px; }
   .warn ul { margin: 0; padding-left: 15px; }
-  .ok { border-left: 3px solid #2f8f5b; background: #f0f8f3; padding: 6px 10px; margin: 8px 0; font-size: 9.5px; }
-  figure { margin: 0 0 14px; break-inside: avoid; }
-  /* A plan that is taller than the page cannot be kept off a break by
-     break-inside alone, so it is capped to the printable height and centred
-     rather than being sliced across two sheets. */
-  figure img { max-width: 100%; max-height: 232mm; width: auto; height: auto;
-         border: 1px solid #c0bcc4; display: block; margin: 0 auto; }
-  figcaption { font-size: 9px; color: #6c7078; margin-top: 4px; }
-  .legend { display: flex; gap: 14px; font-size: 9.5px; margin: 6px 0 10px; flex-wrap: wrap; }
+  .warn li { margin: 1px 0; }
+
+  /* ---- plates ---- */
+  figure { margin: 0 0 16px; break-inside: avoid; }
+  /* A plate taller than the page cannot be kept off a break by break-inside
+     alone, so it is capped to the printable height and centred rather than
+     being sliced across two sheets. */
+  figure img { max-width: 100%; max-height: 218mm; width: auto; height: auto;
+         border: 1px solid #d7d4da; display: block; margin: 0 auto; }
+  figcaption { font-size: 8.5px; color: #7a7e88; margin-top: 6px; text-align: center;
+         max-width: 260mm; margin-left: auto; margin-right: auto; }
+  .legend { display: flex; gap: 16px; font-size: 9px; margin: 8px 0 10px; flex-wrap: wrap;
+         color: #4a4d57; }
   .legend i { display: inline-block; width: 16px; height: 3px; border-radius: 2px;
          vertical-align: middle; margin-right: 5px; }
   .pb { break-before: page; }
-  .foot { margin-top: 18px; padding-top: 8px; border-top: 1px solid #dcd9dd;
-         font-size: 8.5px; color: #888c98; }
-  .noprint { margin: 0 0 14px; }
+  .endnote { margin-top: 20px; padding-top: 9px; border-top: 1px solid #dcd9dd;
+         font-size: 8.5px; color: #888c98; max-width: 260mm; }
+
+  /* ---- the on-screen bar, never printed ---- */
+  .noprint { margin: 0 0 16px; padding: 10px 0; border-bottom: 1px solid #ebe9ed; }
   .noprint button { font: inherit; font-size: 12px; padding: 8px 15px; border-radius: 4px;
          border: 1px solid #6c7ae0; background: #6c7ae0; color: #fff; font-weight: 700; cursor: pointer; }
   .noprint button.g { background: #fff; color: #22242b; border-color: #c0bcc4; }
+  @media screen { body { padding: 0 18px 24px; } .runfoot { display: none; } }
   @media print { .noprint { display: none !important; } }
 </style></head><body>
 
@@ -3777,19 +3903,27 @@ async function buildReport() {
     Choose <b>Save as PDF</b> as the destination. A3 landscape is set already.</span>
 </div>
 
+<div class="runfoot">
+  <span>${esc(h.ref)}</span>
+  <span class="mid">adi Climate Systems &middot; AC Trace &middot; refrigerant pipework take-off</span>
+  <span>${esc(h.date)}</span>
+</div>
+
 <header class="rep">
   <div>
-    <div class="sub">adi Climate Systems &middot; AC Trace</div>
+    <div class="eyebrow">adi Climate Systems &middot; AC Trace</div>
     <h1>${esc(h.ref)}</h1>
+    <div class="strap">Refrigerant pipework take-off &mdash; ${plural(t.condensers, 'system')},
+      ${plural(t.indoors, 'indoor unit')}, ${fmt(t.lengthM, 1)} m of route measured off the drawing</div>
   </div>
-  <div class="meta">
-    <b>Client</b><span>${esc(h.client || '—')}</span>
-    <b>Engineer</b><span>${esc(h.engineer || '—')}</span>
-    <b>Date</b><span>${esc(h.date)}</span>
-    <b>Refrigerant</b><span>${esc(h.refrigerant || '—')}</span>
-    <b>Drawing</b><span>${esc(h.drawing || '—')}</span>
-    <b>Scale</b><span>${esc(h.scale)}</span>
-  </div>
+  <dl class="meta">
+    <dt>Client</dt><dd>${esc(h.client || '—')}</dd>
+    <dt>Engineer</dt><dd>${esc(h.engineer || '—')}</dd>
+    <dt>Date</dt><dd>${esc(h.date)}</dd>
+    <dt>Refrigerant</dt><dd>${esc(h.refrigerant || '—')}</dd>
+    <dt>Drawing</dt><dd>${esc(h.drawing || '—')}</dd>
+    <dt>Scale</dt><dd>${esc(h.scale)}</dd>
+  </dl>
 </header>
 
 <h2>Summary</h2>
@@ -3805,7 +3939,7 @@ async function buildReport() {
   ${fig('Sections', String(t.sections))}
   ${fig('Indoor duty', fmt(t.kwIndoor, 1) + ' kW')}
 </div>
-<p style="font-size:9.5px;color:#6c7078;margin:0 0 8px">
+<p class="lede">
   <b>Route, one direction</b> is the installed route measured once — the plan run plus every riser and
   drop. <b>Pipe total</b> is that route multiplied by the number of pipes each section carries: two for
   liquid and suction gas, three where the high-pressure gas line runs as well.
@@ -3863,18 +3997,16 @@ ${frontSrc ? '<figure><img src="' + frontSrc + '" alt="Elevation of the pipework
 <h2>Pipe sections and indoor units, by system</h2>
 ${sysBlocks || '<p>Nothing traced yet.</p>'}
 
-${loose.length ? '<h3>Sections not on a system</h3><table class="rep"><thead><tr><th>Section</th>'
-  + '<th>From</th><th>To</th><th class="n">Pipes</th><th class="n">Plan m</th><th class="n">Rise m</th>'
-  + '<th class="n">One way m</th><th class="n">Pipe m</th><th class="n">Height m</th>'
-  + '<th>Liquid</th><th>Gas</th><th>HP gas</th><th>Note</th></tr></thead><tbody>'
-  + rowsFor(loose) + '</tbody></table>' : ''}
+${loose.length ? '<h3>Sections not on a system</h3>' + sectionTable(loose) : ''}
 
-<div class="foot">
-  adi Climate Systems &middot; AC Trace &middot; ${esc(h.ref)} &middot; ${esc(h.date)}
-  &middot; naming: M mains, B branches, sub-branches lettered from their parent, X not connected.
-  Lengths are measured off the drawing at ${esc(h.scale)} and are only as good as that scale.
-  Refrigerant line sizes, actual and equivalent length limits, height difference limits and
-  connected ratio limits are the manufacturer’s and come from their selection software.
+<div class="endnote">
+  <b>Section naming</b> &mdash; M mains from a condenser, B branches off a main, sub-branches lettered
+  from their parent, X not connected. A run cut into sections by the joints along it is numbered from
+  the condenser.<br>
+  <b>Basis</b> &mdash; lengths are measured off ${esc(h.drawing || 'the drawing')} at
+  ${esc(h.scale)} and are only as good as that scale. Refrigerant line sizes, actual and equivalent
+  length limits, height difference limits and connected ratio limits are the manufacturer’s and come
+  from their selection software; this take-off measures the route and does not size the pipe.
 </div>
 
 </body></html>`;
@@ -4292,7 +4424,7 @@ async function exportXlsx() {
   };
   try {
     const plan = await planImage();
-    picSheet('Layout plan', plan, S.img.w, S.img.h,
+    picSheet('Layout plan', plan.url, plan.w, plan.h,
       'Layout plan — every section labelled with its name, its one-way length and the height it runs at');
   } catch (e) {}
   try {
