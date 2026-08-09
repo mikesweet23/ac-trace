@@ -239,11 +239,17 @@
   }
 
   /* the running instruction while a tool is armed */
+  /* Left AND right are both set so the shrink-to-fit width is measured
+     against the whole stage. With only `left: 50%` the available width was
+     half the stage, so a sentence wrapped into a tall block that sat over the
+     drawing and swallowed the clicks meant for it. `margin: 0 auto` on top of
+     that keeps it centred. */
   .hint {
-    position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 7;
+    position: absolute; left: 12px; right: 12px; top: 12px; z-index: 7;
+    width: fit-content; max-width: calc(100% - 24px); margin: 0 auto;
     background: var(--graphite); color: var(--paper); padding: 8px 15px;
     border-radius: 4px; font-size: 12.5px; box-shadow: 0 4px 18px rgba(0,0,0,.25);
-    display: none; align-items: center; gap: 12px; max-width: calc(100% - 24px);
+    display: none; align-items: center; gap: 12px;
   }
   .hint.on { display: flex; }
   .hint kbd {
@@ -254,6 +260,13 @@
   .hint .x:hover { color: #fff; }
   .hint .hopt { display: none; align-items: center; gap: 6px; font-size: 11.5px; color: #cdd3dc; white-space: nowrap; }
   .hint.trace .hopt { display: flex; }
+  #hintAngle {
+    font-family: 'Azeret Mono', monospace; font-size: 11.5px; font-weight: 600;
+    background: rgba(255,255,255,.10); border-radius: 3px; padding: 3px 7px; min-width: 56px;
+    justify-content: center;
+  }
+  #hintAngle.free { background: var(--measure); color: #fff; }
+  .hint.alt #hintAngle.free { background: rgba(0,0,0,.22); }
   .hint .hopt input[type=checkbox] { width: 15px; height: 15px; margin: 0; }
   /* the height the next section will be traced at — the one thing that has to
      be changeable without leaving the trace */
@@ -595,7 +608,8 @@
 
       <div class="hint" id="hint">
         <span id="hintTxt"></span>
-        <label class="hopt"><input type="checkbox" id="orthoChk"> Square up <kbd>O</kbd></label>
+        <label class="hopt" title="On, corners lock to horizontal, vertical and 45°. Off, every corner is a free angle. Hold Alt to flip it for one click."><input type="checkbox" id="orthoChk"> Square corners <kbd>O</kbd></label>
+        <span class="hopt" id="hintAngle" title="The angle of the leg you are drawing"></span>
         <span class="hgt hopt" title="The height the next section is traced at. Change it before clicking the next point and that point starts a riser.">
           Height <input type="number" id="hgtIn" step="0.1"> m
         </span>
@@ -1533,6 +1547,23 @@ function render() {
         fill: i === pts.length - 1 ? 'var(--measure)' : (step ? 'var(--measure)' : 'var(--white)'),
         stroke: 'var(--measure)', 'stroke-width': 1.6 * k }));
     });
+    /* The angle of the leg being drawn, so a free angle is something you can
+       see and agree with rather than something that just happened. Measured
+       off horizontal, 0–180°, because a pipe leg's direction is what matters
+       and not which way along it you drew. */
+    if (pts.length > 1) {
+      const a = pts[pts.length - 2], b = pts[pts.length - 1];
+      let deg = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
+      deg = ((deg % 180) + 180) % 180;
+      const square = Math.abs(deg % 45) < 0.05 || Math.abs(deg % 45 - 45) < 0.05;
+      const box = el('hintAngle');
+      if (box) {
+        box.textContent = fmt(deg, 1) + '°';
+        box.classList.toggle('free', !square);
+        box.title = square ? 'Square: ' + fmt(deg, 0) + '° off horizontal'
+                           : 'A free angle — ' + fmt(deg, 1) + '° off horizontal';
+      }
+    }
     if (S.pxPerM > 0 && hoverPt) {
       const run = polyLenPx(pts) / S.pxPerM;
       const lbl = fmt(run, 2) + ' m  @ ' + fmt(traceHeight, 2) + ' m';
@@ -1916,6 +1947,11 @@ function renderStatus() {
     '<div class="st' + (warn ? ' warn' : '') + '"><b>' + lbl + '</b><span>' + val + '</span></div>';
   let html = '';
   html += cell('Scale', S.pxPerM > 0 ? fmt(S.pxPerM, 1) + ' px/m' : 'not set', !(S.pxPerM > 0));
+  /* Which way the corner lock is set, always, not only while tracing. It is
+     the one setting that silently changes what a click does, so leaving it
+     to be discovered inside a dialog was the wrong call. */
+  html += cell('Corners' + (overrideKey ? ' <em style="font-style:normal;color:var(--measure)">alt</em>' : ''),
+    orthoNow() ? 'square' : 'free');
   html += cell('Systems', String(t.condensers));
   html += cell('Indoor units', String(t.indoors));
   html += cell('Route one way', fmt(t.lengthM, 1) + ' m');
@@ -1966,21 +2002,20 @@ function buildRail() {
   });
 }
 
+/* The hint bar is a reminder of what the armed tool does, not the manual —
+   How to use is the manual. Every line here has to stay short enough to sit
+   on one row over the drawing rather than becoming a block that covers it. */
 const HINTS = {
-  calib: 'Click two points a known distance apart on the drawing, then type the real dimension.',
-  condenser: 'Pick the system type, then click where the condenser sits. Select it afterwards to drag it to '
-       + 'the size and angle it really is.',
-  indoor: 'Pick the unit type, then click where it sits. The box is drawn at its real size once the drawing is '
-       + 'zoomed in. Select it afterwards and drag the corners to resize, or the arm above it to turn it.',
-  bc: 'Pick the box, then click where it sits. A BC controller serves several indoor units; a single BC box sits before one.',
-  select: 'Click a unit or a section to open it. A selected unit gets corner handles to resize it and an arm '
-       + 'above it to turn it to any angle &mdash; hold <kbd>Shift</kbd> to keep its shape, or to snap the angle to 15°.',
-  trace: 'Start on the ringed point. Click to add corners. Change the height before a click and that point becomes a riser. '
-       + 'Finish on another unit, joint or corner. Hold <kbd>Alt</kbd> to flip the corner lock for one click, or to branch '
-       + 'into the middle of a run you have already traced.',
+  calib: 'Click two points a known distance apart, then type the real dimension.',
+  condenser: 'Pick the system type, then click where the condenser sits.',
+  indoor: 'Pick the unit type, then click where it sits. Select it afterwards to drag it to size.',
+  bc: 'Pick the box, then click where it sits.',
+  select: 'Drag a selected unit’s corners to resize it, or the arm above it to turn it. '
+       + '<kbd>Shift</kbd> keeps its shape, or snaps the angle to 15°.',
+  trace: 'Click along the route. Change the height before a click to start a riser. Finish on a unit, '
+       + 'joint or corner. <kbd>Alt</kbd> frees one corner, or branches into a run already traced.',
   pan: 'Drag to move around the drawing.',
-  joint: 'Click anywhere along a run to cut a branch joint into it. The run splits there, and you can trace on from it '
-       + 'straight away.',
+  joint: 'Click along a run to cut a branch joint into it, then trace on from it.',
 };
 
 /* ---------- the override key ----------
@@ -1996,7 +2031,8 @@ function setOverride(on) {
   overrideKey = on;
   const h = el('hint');
   if (h) h.classList.toggle('alt', on);
-  if (tool === 'trace' || tool === 'joint' || draft) render();
+  // the status strip reports the lock, so it has to keep up with the key too
+  if (S.img) render();
 }
 
 function setTool(t) {
@@ -4698,8 +4734,11 @@ function projectDialog() {
     + '<input type="number" id="pKw" step="0.1" value="' + s.defaultKw + '"></label>'
 
     + '<h4>While tracing</h4>'
-    + chk('pOrtho', s.ortho, 'Square up corners',
-        'Locks each corner to horizontal, vertical or 45°. Hold Alt to take one free angle without turning it off.')
+    + chk('pOrtho', s.ortho, 'Square corners',
+        'On, every corner locks to horizontal, vertical or 45° — right for a job that runs with the building. '
+        + 'Off, every corner takes whatever angle you click, which is what you want on a plant room, a roof run or '
+        + 'anything set out at an angle. Either way, holding <b>Alt</b> flips it for one corner, and the status '
+        + 'strip says which way it is set.')
     + chk('pSnap', s.snapPoints !== false, 'Branch only at units, joints and corners',
         'A click along a run is pulled to the nearest point on it. Hold Alt to cut a joint exactly where the cursor is.')
     + chk('pAuto', s.autoName !== false, 'Name sections automatically',
@@ -5122,6 +5161,10 @@ el('stage').addEventListener('drop', ev => {
    KEYBOARD
    ========================================================================== */
 document.addEventListener('keydown', ev => {
+  /* The override key has to register the moment it goes down, not on the
+     next mouse move — holding it and seeing nothing change is what makes it
+     look as though it does nothing. */
+  setOverride(ev.altKey);
   const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(ev.target.tagName || '');
   if (typing) { if (ev.key === 'Escape') ev.target.blur(); return; }
   const k = (ev.key || '').toLowerCase();
@@ -5158,8 +5201,14 @@ document.addEventListener('keydown', ev => {
     return;
   }
   if (ev.key === 'Delete' || ev.key === 'Backspace') { deleteSelected(); return; }
-  if (k === 'o') { S.settings.ortho = !S.settings.ortho; el('orthoChk').checked = S.settings.ortho;
-    toast('Square up ' + (S.settings.ortho ? 'on' : 'off')); render(); return; }
+  if (k === 'o') {
+    S.settings.ortho = !S.settings.ortho;
+    el('orthoChk').checked = S.settings.ortho;
+    toast(S.settings.ortho
+      ? 'Corners square &mdash; locked to horizontal, vertical and 45°'
+      : 'Corners free &mdash; every corner takes whatever angle you click');
+    render(); return;
+  }
   if (k === '[' || k === ']') {
     traceHeight = Math.round((traceHeight + (k === ']' ? 0.1 : -0.1)) * 100) / 100;
     el('hgtIn').value = fmt(traceHeight, 2);

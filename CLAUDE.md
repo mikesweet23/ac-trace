@@ -147,7 +147,26 @@ Repeated fine angles re-encode the bitmap and soften it; the dialog says so.
   the way.** Over open paper it flips the corner lock, so a square job takes
   one free angle and a free-form job one square corner without changing a
   setting. Over a run already traced it cuts the joint where the cursor is.
-  The hint bar turns accent-coloured while it is held.
+  The hint bar turns accent-coloured while it is held. `setOverride()` is
+  called from **keydown as well as pointermove** — holding the key and seeing
+  nothing change until you jog the mouse is what made it look as though it
+  did nothing.
+- **The corner lock is stated in three places, because it silently changes
+  what a click does.** The status strip carries it at all times (`square` /
+  `free`, with `alt` beside it while the key is held); the hint bar has the
+  tick box and the key; and Job & defaults has the full explanation. It
+  started life only in the dialog, and the first thing anyone asked was how to
+  draw a free angle. The live angle badge in the hint bar is the other half of
+  that: it reads the leg you are drawing and goes accent-coloured the moment
+  the angle is not a multiple of 45°, so a free angle is something you agree
+  with rather than something that just happened.
+- **The hint bar must stay one or two rows.** It is a reminder of what the
+  armed tool does; *How to use* is the manual. It is absolutely positioned
+  with **both `left` and `right` set** so shrink-to-fit measures against the
+  whole stage — with only `left: 50%` the available width is half the stage,
+  and a sentence wraps into a block 200 px tall that sits over the drawing and
+  swallows the clicks meant for it. That is a bug that looks like "clicking
+  does nothing", so keep the lines short and keep both offsets.
 - **Units are drawn at their real footprint once you are zoomed in far
   enough**, and at a legible minimum when you are not (`unitBox()`). That is
   what puts a 600 cassette on its ceiling tile. Both sides of the box scale
