@@ -150,8 +150,32 @@ Repeated fine angles re-encode the bitmap and soften it; the dialog says so.
   The hint bar turns accent-coloured while it is held.
 - **Units are drawn at their real footprint once you are zoomed in far
   enough**, and at a legible minimum when you are not (`unitBox()`). That is
-  what puts a 600 cassette on its ceiling tile. They are **never rotated**, so
-  a name and a duty stay square to the sheet however the pipe arrives.
+  what puts a 600 cassette on its ceiling tile. Both sides of the box scale
+  together, so the aspect is never distorted to make a unit visible.
+- **The type's size and angle are a starting figure, not a fact.** `n.w` and
+  `n.d` are the footprint in real metres and `n.rot` is any angle in degrees —
+  set by dragging the corner handles and the arm on the plan, or typed into
+  the inspector. `unitFoot()` is the only place that resolves them, falling
+  back to the type. Changing the unit type does **not** move a size that has
+  been set by hand; `sized` is what tells them apart, and the inspector says
+  which it is and offers *Back to type size*.
+- **Resizing and turning are drawing truth only, and must stay that way.**
+  Both work about the centre, and the centre is where the pipe lands — so no
+  traced length can change. If a future edit ever moves a unit's connection
+  point off its centre, `riseBreakdown()` and every length in the schedule
+  become sensitive to a cosmetic drag, which is exactly the bug this rule
+  exists to prevent.
+- **The box turns; the writing does not.** The rect, its edge band and its
+  glyph go inside one rotated `<g>`; the name, the duty and the height are
+  drawn outside it, placed off `unitHalf()` — the axis-aligned extent of the
+  turned box — so they clear it at any angle. A name and a duty read left to
+  right on the sheet however the unit sits, which is the whole reason the
+  labels were kept off the box in the first place.
+- **The plan is the drawing of record and 3D follows it.** `cuboid3D()` takes
+  the same `rot`, and the box uses the real footprint with the type's nominal
+  casing depth `t`, grown only when it would otherwise be too small to see
+  against the extent of the job. If the two views ever disagreed about where a
+  unit is or which way it faces, one of them would be lying.
 - **Deleting a joint heals the pipework.** A joint with two sections on it
   merges them back into one and keeps every metre. Three or more cannot be
   healed, so it says so and offers the destructive option rather than doing it
@@ -242,18 +266,24 @@ Five minutes, and it exercises everything:
    types, and a single BC box in front of each. Trace them up. Confirm the
    sections from the condenser show **3** in the pipe badge and the sections
    after each box show **2**.
-4. Trace a run that **changes height mid-way** — press `]` between two clicks.
+4. **Select an indoor unit and drag a corner handle**, then the arm above it.
+   Confirm the footprint readout under the box follows, that the name and the
+   duty stay square to the sheet while the box turns, and that *Route one way*
+   in the status strip **does not move by a single decimal**. Change the unit
+   type afterwards and confirm the hand-set size survives it.
+5. Trace a run that **changes height mid-way** — press `]` between two clicks.
    Confirm a riser marker with the height change appears on the plan, that the
    run inspector lists a height per point, and that *Rise* on the schedule is
    not zero.
-5. **Check.** It should come back clean. Now change the condenser to *Multi
+6. **Check.** It should come back clean. Now change the condenser to *Multi
    split* and run Check again: it must name the sections carrying more than
    one unit.
-6. **3D view.** Confirm every unit sits at the height it was given, that the
-   height staff reads off, and that a 3-pipe run shows three lines.
-7. **Save**, reload the page, **Open** the file. Every section name, length
-   and point height must come back identical.
-8. **PDF report** — the layout plan and both 3D pictures must be there, in
+7. **3D view.** Confirm every unit sits at the height it was given, that the
+   height staff reads off, that a 3-pipe run shows three lines, and that the
+   unit you resized and turned stands the same way there as on the plan.
+8. **Save**, reload the page, **Open** the file. Every section name, length
+   point height, footprint and angle must come back identical.
+9. **PDF report** — the layout plan and both 3D pictures must be there, in
    colour, with the section labels legible. **Excel** — open it and confirm
    seven sheets, that *Pipe sections* totals match the schedule drawer, and
    that the two picture sheets carry their pictures.
@@ -285,7 +315,8 @@ Replace when better figures arrive; none of them changes a length.
 
 | Assumption | Currently |
 |---|---|
-| Indoor unit footprints | Wall 1.05 × 0.24, 900 cassette 0.95 × 0.95, 600 cassette 0.62 × 0.62, ducted 1.40 × 0.70, 1-way underslung 1.20 × 0.50 m. Representative, not any one manufacturer's |
+| Indoor unit footprints | Wall 1.05 × 0.24, 900 cassette 0.95 × 0.95, 600 cassette 0.62 × 0.62, ducted 1.40 × 0.70, 1-way underslung 1.20 × 0.50 m. Representative, not any one manufacturer's — and only a starting size, because every unit can be dragged or typed to the size it really is |
+| Casing depth, 3D only (`t`) | Condenser 1.30, ducted 0.35, wall and 900 cassette 0.30, BC controller 0.30, 600 cassette 0.26, 1-way underslung 0.25, single BC box 0.22 m. Nominal: nothing here is told how deep a real unit is, and no length depends on it |
 | Default heights | condenser 0.30, pipe run 3.20, indoor 2.70, BC box 2.90 m above finished floor |
 | Connected-ratio flag | over 130% is called out. Real limits are per range and per refrigerant |
 | Twin/triple leg tolerance | 20% between the legs past the tee |

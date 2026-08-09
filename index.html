@@ -770,27 +770,27 @@ const SYSTEM_ORDER = ['split', 'multi', 'twin', 'triple', 'vrf2', 'vrf2bc', 'vrf
 const INDOOR_TYPES = {
   wall: {
     label: 'Wall mounted', short: 'Wall', abbr: 'WM',
-    w: 1.05, d: 0.24, h: 2.10, sym: 'wall',
+    w: 1.05, d: 0.24, h: 2.10, t: 0.30, sym: 'wall',
     note: 'High level on a wall.',
   },
   cass900: {
     label: '900 mm ceiling cassette', short: '900 cassette', abbr: 'CC9',
-    w: 0.95, d: 0.95, h: 2.70, sym: 'cass4',
+    w: 0.95, d: 0.95, h: 2.70, t: 0.30, sym: 'cass4',
     note: 'Four-way blow, 950 mm panel in a ceiling grid.',
   },
   cass600: {
     label: '600 mm ceiling cassette', short: '600 cassette', abbr: 'CC6',
-    w: 0.62, d: 0.62, h: 2.70, sym: 'cass4',
+    w: 0.62, d: 0.62, h: 2.70, t: 0.26, sym: 'cass4',
     note: 'Four-way blow, one 600 mm ceiling tile.',
   },
   ducted: {
     label: 'Ducted unit', short: 'Ducted', abbr: 'DU',
-    w: 1.40, d: 0.70, h: 2.90, sym: 'duct',
+    w: 1.40, d: 0.70, h: 2.90, t: 0.35, sym: 'duct',
     note: 'Concealed in the ceiling void, ducted to grilles.',
   },
   under1: {
     label: '1-way blow underslung', short: '1-way underslung', abbr: 'U1',
-    w: 1.20, d: 0.50, h: 2.40, sym: 'oneway',
+    w: 1.20, d: 0.50, h: 2.40, t: 0.25, sym: 'oneway',
     note: 'Surface mounted under the ceiling, blowing one way.',
   },
 };
@@ -799,9 +799,9 @@ const INDOOR_ORDER = ['wall', 'cass900', 'cass600', 'ducted', 'under1'];
 /* Condensers and boxes. Same shape as an indoor type so one drawing routine
    covers all of them. */
 const PLANT_TYPES = {
-  condenser: { label: 'Condenser', abbr: 'CU', w: 1.10, d: 0.42, h: 0.30, sym: 'cond' },
-  bcMain:    { label: 'BC controller', abbr: 'BC', w: 0.90, d: 0.40, h: 2.90, sym: 'bc' },
-  bcSingle:  { label: 'Single BC box', abbr: 'BCS', w: 0.42, d: 0.32, h: 2.90, sym: 'bcs' },
+  condenser: { label: 'Condenser', abbr: 'CU', w: 1.10, d: 0.42, h: 0.30, t: 1.30, sym: 'cond' },
+  bcMain:    { label: 'BC controller', abbr: 'BC', w: 0.90, d: 0.40, h: 2.90, t: 0.30, sym: 'bc' },
+  bcSingle:  { label: 'Single BC box', abbr: 'BCS', w: 0.42, d: 0.32, h: 2.90, t: 0.22, sym: 'bcs' },
 };
 
 /* ==========================================================================
@@ -1330,20 +1330,64 @@ function toDwg(ev) {
    True size once the drawing is zoomed in far enough to read it — a 600
    cassette is then 600 mm on a scaled plan and lands on its ceiling tile —
    and a legible minimum when zoomed out, so a whole-floor view still shows
-   where everything is. */
+   where everything is.
+
+   The type's figure is only the starting size. `n.w` and `n.d` are the real
+   footprint in metres once it has been set by hand, and `n.rot` is any angle
+   in degrees, because a unit on a real drawing is whatever size it is and
+   sits however the building sits. Both are drawing truth only: the pipe
+   connects at the centre, which does not move, so resizing or turning a unit
+   never changes a traced length. */
 function unitDef(n) {
   if (n.type === 'condenser') return PLANT_TYPES.condenser;
   if (n.type === 'bc') return n.kind === 'single' ? PLANT_TYPES.bcSingle : PLANT_TYPES.bcMain;
   if (n.type === 'indoor') return INDOOR_TYPES[n.unit] || INDOOR_TYPES.cass600;
   return null;
 }
-function unitBox(n, k) {
+const MIN_FOOT_M = 0.08;
+/* The footprint in real metres: set by hand if it has been, otherwise the
+   type's. `sized` says which, so changing the type knows whether it may
+   move the size under someone. */
+function unitFoot(n) {
   const def = unitDef(n);
-  if (!def) return { w: 10 * k, d: 10 * k, def: null };
-  if (!(S.pxPerM > 0)) return { w: 46 * k, d: 28 * k, def };
-  const w = def.w * S.pxPerM, d = def.d * S.pxPerM;
-  const f = Math.max(1, (n.type === 'condenser' ? 46 : 38) * k / w);
-  return { w: w * f, d: d * f, def };
+  const w = parseFloat(n.w), d = parseFloat(n.d);
+  return {
+    def,
+    w: (w > 0 ? w : (def ? def.w : 1.0)),
+    d: (d > 0 ? d : (def ? def.d : 0.5)),
+    sized: (w > 0 || d > 0),
+    rot: parseFloat(n.rot) || 0,
+  };
+}
+function unitBox(n, k) {
+  const f0 = unitFoot(n);
+  const def = f0.def;
+  if (!def) return { w: 10 * k, d: 10 * k, def: null, rot: 0, foot: f0 };
+  if (!(S.pxPerM > 0)) return { w: 46 * k, d: 28 * k, def, rot: f0.rot, foot: f0 };
+  const w = f0.w * S.pxPerM, d = f0.d * S.pxPerM;
+  // legible when zoomed out; aspect is never distorted, both sides scale
+  const f = Math.max(1, (n.type === 'condenser' ? 46 : 38) * k / Math.max(w, d));
+  return { w: w * f, d: d * f, def, rot: f0.rot, foot: f0 };
+}
+/* Half the axis-aligned extent of the box once it has been turned. Labels are
+   placed off this, so they clear a rotated unit instead of sitting on it. */
+function unitHalf(b) {
+  const r = (b.rot || 0) * Math.PI / 180;
+  const c = Math.abs(Math.cos(r)), s = Math.abs(Math.sin(r));
+  return { x: (b.w * c + b.d * s) / 2, y: (b.w * s + b.d * c) / 2 };
+}
+/* A drawing point in a unit's own frame, so a turned box can be hit-tested
+   and dragged as if it were square. */
+function toLocal(n, p, rotDeg) {
+  const r = ((rotDeg === undefined ? (parseFloat(n.rot) || 0) : rotDeg)) * Math.PI / 180;
+  const co = Math.cos(r), si = Math.sin(r);
+  const dx = p.x - n.x, dy = p.y - n.y;
+  return { x: dx * co + dy * si, y: -dx * si + dy * co };
+}
+function fromLocal(n, q, rotDeg) {
+  const r = ((rotDeg === undefined ? (parseFloat(n.rot) || 0) : rotDeg)) * Math.PI / 180;
+  const co = Math.cos(r), si = Math.sin(r);
+  return { x: n.x + q.x * co - q.y * si, y: n.y + q.x * si + q.y * co };
 }
 
 /* ---------- what's under the cursor ---------- */
@@ -1357,13 +1401,46 @@ function hitNode(p, tolPx) {
       return;
     }
     const b = unitBox(n, k);
-    const dx = Math.abs(p.x - n.x) - b.w / 2, dy = Math.abs(p.y - n.y) - b.d / 2;
+    const q = toLocal(n, p, b.rot);
+    const dx = Math.abs(q.x) - b.w / 2, dy = Math.abs(q.y) - b.d / 2;
     if (dx < 4 * k && dy < 4 * k) {
       const d = Math.max(dx, dy);
       if (!best || d < best.d) best = { d, node: n };
     }
   });
   return best ? best.node : null;
+}
+
+/* ---------- the resize and rotate handles ----------
+   Only on the selected unit, only with Select armed. Four corners resize
+   about the centre — the centre is where the pipe lands, so resizing must
+   not move it — and one arm above the box turns it to any angle. Shift
+   keeps a square square, and snaps the angle to 15°. */
+const HANDLE_PX = 5.5;
+const ROT_ARM_PX = 26;
+function handlesOf(n, k) {
+  const b = unitBox(n, k);
+  const hw = b.w / 2, hd = b.d / 2;
+  const out = [];
+  [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([sx, sy]) => {
+    out.push(Object.assign({ kind: 'size', sx, sy, b }, fromLocal(n, { x: sx * hw, y: sy * hd }, b.rot)));
+  });
+  out.push(Object.assign({ kind: 'rot', b },
+    fromLocal(n, { x: 0, y: -hd - ROT_ARM_PX * k }, b.rot)));
+  return out;
+}
+function hitHandle(p) {
+  if (tool !== 'select' || !sel || sel.kind !== 'node') return null;
+  const n = nodeById(sel.id);
+  if (!n || n.type === 'branch') return null;
+  const k = 1 / zoom;
+  const tol = (HANDLE_PX + 4) * k;
+  let best = null;
+  handlesOf(n, k).forEach(h => {
+    const d = dist(h, p);
+    if (d < tol && (!best || d < best.d)) best = { d, handle: h, node: n };
+  });
+  return best;
 }
 function hitSeg(p, tolPx) {
   const tol = (tolPx || 10) / zoom;
@@ -1678,12 +1755,8 @@ function drawNode(g, n, k) {
   const def = b.def;
   const cond = n.type === 'condenser';
   const bc = n.type === 'bc';
-  const x = n.x - b.w / 2, y = n.y - b.d / 2;
-
-  if (picked) {
-    g.appendChild(mk('rect', { x: x - 4 * k, y: y - 4 * k, width: b.w + 8 * k, height: b.d + 8 * k,
-      rx: 5 * k, fill: 'none', stroke: 'var(--measure)', 'stroke-width': 2.6 * k }));
-  }
+  const half = unitHalf(b);
+  const x = -b.w / 2, y = -b.d / 2;               // the box is drawn about its own centre
 
   const edge = cond ? 'var(--graphite)'
              : bc ? '#5a5d68'
@@ -1691,20 +1764,32 @@ function drawNode(g, n, k) {
   const fill = cond ? 'var(--graphite)' : (n.reached ? 'var(--white)' : '#fdecea');
   const stroke = cond ? 'var(--graphite)' : (n.reached ? edge : 'var(--alarm)');
 
-  g.appendChild(mk('rect', { x, y, width: b.w, height: b.d, rx: 2.5 * k,
+  /* The box, its edge band and its glyph turn together; everything written
+     beside it does not. A name and a duty read left to right on the sheet
+     whatever angle the unit sits at, which is the whole reason the labels
+     were kept off the box in the first place. */
+  const gg = mk('g', { transform: 'translate(' + n.x + ' ' + n.y + ') rotate(' + (b.rot || 0) + ')' });
+  if (picked) {
+    gg.appendChild(mk('rect', { x: x - 4 * k, y: y - 4 * k, width: b.w + 8 * k, height: b.d + 8 * k,
+      rx: 5 * k, fill: 'none', stroke: 'var(--measure)', 'stroke-width': 2.6 * k }));
+  }
+  gg.appendChild(mk('rect', { x, y, width: b.w, height: b.d, rx: 2.5 * k,
     fill, stroke, 'stroke-width': (cond ? 2 : 1.8) * k }));
   /* Condensers and indoor units are the two things you look for on a busy
      layout, so each carries a solid edge band in its own colour. */
   if (!cond) {
-    g.appendChild(mk('rect', { x, y, width: b.w, height: Math.min(3.2 * k, b.d * 0.22),
+    gg.appendChild(mk('rect', { x, y, width: b.w, height: Math.min(3.2 * k, b.d * 0.22),
       rx: 1.2 * k, fill: n.reached ? edge : 'var(--alarm)' }));
   }
-
-  if (def) drawUnitGlyph(g, def.sym, n.x, n.y + b.d * 0.04,
+  if (def) drawUnitGlyph(gg, def.sym, 0, b.d * 0.04,
     b.w * 0.9, b.d * 0.9, cond ? '#8e97a6' : edge, k);
+  g.appendChild(gg);
+
+  if (picked && tool === 'select') drawHandles(g, n, k, b);
 
   // ---- the name above, the duty and type below ----
-  const nameY = y - 5 * k;
+  const yTop = -half.y, yBot = half.y;
+  const nameY = n.y + yTop - 5 * k;
   const nm = String(n.name || '');
   if (nm) {
     const wPx = nm.length * 5.6 + 8;
@@ -1730,17 +1815,49 @@ function drawNode(g, n, k) {
   if (bits.length) {
     const t = bits.join('  ');
     const wPx = t.length * 5.0 + 8;
-    g.appendChild(mk('rect', { x: n.x - wPx / 2 * k, y: y + b.d + 1.5 * k, width: wPx * k, height: 12 * k,
+    g.appendChild(mk('rect', { x: n.x - wPx / 2 * k, y: n.y + yBot + 1.5 * k, width: wPx * k, height: 12 * k,
       rx: 1.5 * k, fill: 'rgba(255,255,255,.90)' }));
-    g.appendChild(mk('text', { x: n.x, y: y + b.d + 10 * k, 'text-anchor': 'middle',
+    g.appendChild(mk('text', { x: n.x, y: n.y + yBot + 10 * k, 'text-anchor': 'middle',
       'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace',
       fill: 'var(--ink-soft)' }, t));
   }
 
   if (!cond && !n.reached) {
-    g.appendChild(mk('text', { x: n.x, y: y - 16 * k, 'text-anchor': 'middle',
+    g.appendChild(mk('text', { x: n.x, y: n.y + yTop - 16 * k, 'text-anchor': 'middle',
       'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 700,
       fill: 'var(--alarm)' }, 'NOT PIPED'));
+  }
+}
+
+/* ---------- the handles on the selected unit ---------- */
+function drawHandles(g, n, k, b) {
+  const half = unitHalf(b);
+  const hs = handlesOf(n, k);
+  const rot = hs[hs.length - 1];
+  // the arm the rotate handle sits on
+  const top = fromLocal(n, { x: 0, y: -b.d / 2 }, b.rot);
+  g.appendChild(mk('line', { x1: top.x, y1: top.y, x2: rot.x, y2: rot.y,
+    stroke: 'var(--measure)', 'stroke-width': 1.4 * k }));
+  hs.forEach(h => {
+    if (h.kind === 'rot') {
+      g.appendChild(mk('circle', { cx: h.x, cy: h.y, r: HANDLE_PX * k, fill: 'var(--measure)',
+        stroke: 'var(--white)', 'stroke-width': 1.6 * k }));
+      return;
+    }
+    g.appendChild(mk('rect', { x: h.x - HANDLE_PX * k, y: h.y - HANDLE_PX * k,
+      width: HANDLE_PX * 2 * k, height: HANDLE_PX * 2 * k, rx: 1.2 * k,
+      fill: 'var(--white)', stroke: 'var(--measure)', 'stroke-width': 1.8 * k }));
+  });
+  // the real footprint, so what is being drawn is the size it says it is
+  if (S.pxPerM > 0 && b.foot) {
+    const t = fmt(b.foot.w, 2) + ' × ' + fmt(b.foot.d, 2) + ' m'
+      + (b.rot ? '  ' + fmt(b.rot, 1) + '°' : '');
+    const wPx = t.length * 5.4 + 12;
+    g.appendChild(mk('rect', { x: n.x - wPx / 2 * k, y: n.y + half.y + 15 * k,
+      width: wPx * k, height: 13 * k, rx: 2 * k, fill: 'var(--measure)' }));
+    g.appendChild(mk('text', { x: n.x, y: n.y + half.y + 24.5 * k, 'text-anchor': 'middle',
+      'font-size': 9 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+      fill: '#fff' }, t));
   }
 }
 
@@ -1851,9 +1968,13 @@ function buildRail() {
 
 const HINTS = {
   calib: 'Click two points a known distance apart on the drawing, then type the real dimension.',
-  condenser: 'Pick the system type, then click where the condenser sits.',
-  indoor: 'Pick the unit type, then click where it sits. The box is drawn at its real size once the drawing is zoomed in.',
+  condenser: 'Pick the system type, then click where the condenser sits. Select it afterwards to drag it to '
+       + 'the size and angle it really is.',
+  indoor: 'Pick the unit type, then click where it sits. The box is drawn at its real size once the drawing is '
+       + 'zoomed in. Select it afterwards and drag the corners to resize, or the arm above it to turn it.',
   bc: 'Pick the box, then click where it sits. A BC controller serves several indoor units; a single BC box sits before one.',
+  select: 'Click a unit or a section to open it. A selected unit gets corner handles to resize it and an arm '
+       + 'above it to turn it to any angle &mdash; hold <kbd>Shift</kbd> to keep its shape, or to snap the angle to 15°.',
   trace: 'Start on the ringed point. Click to add corners. Change the height before a click and that point becomes a riser. '
        + 'Finish on another unit, joint or corner. Hold <kbd>Alt</kbd> to flip the corner lock for one click, or to branch '
        + 'into the middle of a run you have already traced.',
@@ -2293,6 +2414,36 @@ function heightField(v, label) {
     + '<input type="number" id="fHeight" step="0.05" value="' + fmt(v, 2) + '"></label>';
 }
 
+/* ---------- footprint and angle ----------
+   The type's figure is a starting size, not a fact. A unit on a real drawing
+   is whatever size the schedule says and sits however the building sits, so
+   both are editable here and by dragging the handles on the plan. Neither
+   changes a length: the pipe connects at the centre and the centre does not
+   move. */
+function footprintFields(n) {
+  const f = unitFoot(n);
+  const def = f.def;
+  return '<div class="fld"><span>Footprint on the plan <em>metres, and the angle it sits at</em></span>'
+    + '<div class="row3">'
+    + '<input type="number" id="fW" step="0.05" min="' + MIN_FOOT_M + '" value="' + fmt(f.w, 2) + '" title="Width">'
+    + '<input type="number" id="fD" step="0.05" min="' + MIN_FOOT_M + '" value="' + fmt(f.d, 2) + '" title="Depth">'
+    + '<input type="number" id="fRot" step="1" value="' + fmt(f.rot, 1) + '" title="Angle, degrees clockwise">'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">'
+    + '<button class="btn ghost sm" id="fSquare">Square to the sheet</button>'
+    + '<button class="btn ghost sm" id="fSquareUp">Make it square</button>'
+    + (f.sized && def ? '<button class="btn ghost sm" id="fSizeReset">Back to type size</button>' : '')
+    + '</div>'
+    + (f.sized && def
+        ? '<div class="note">Set by hand. The ' + esc(def.label.toLowerCase()) + ' starts at '
+          + fmt(def.w, 2) + ' × ' + fmt(def.d, 2) + ' m, and changing the type will not move a size '
+          + 'you have set yourself.</div>'
+        : '<div class="note">The type’s own size. Drag the corner handles on the plan to change it, '
+          + 'or the arm above the box to turn it — hold <b>Shift</b> to keep the shape, or to snap '
+          + 'the angle to 15°.</div>')
+    + '</div>';
+}
+
 /* ---------- condenser ---------- */
 function condenserForm(n) {
   const st = (S.systems || []).find(s => s.cond.id === n.id);
@@ -2310,7 +2461,8 @@ function condenserForm(n) {
     + (n.kw || 0) + '"></label>'
     + '<label class="fld"><span>Heating <em>kW</em></span><input type="number" id="fKwH" step="0.1" value="'
     + (n.kwHeat || 0) + '"></label></div>'
-    + heightField(heightOf(n));
+    + heightField(heightOf(n))
+    + footprintFields(n);
 
   if (st) {
     const rows = [
@@ -2351,10 +2503,14 @@ function indoorForm(n) {
     + '<label class="fld"><span>Heating <em>kW</em></span><input type="number" id="fKwH" step="0.1" value="'
     + (n.kwHeat || 0) + '"></label></div>'
     + heightField(heightOf(n))
+    + footprintFields(n)
     + '<label class="fld"><span>Room or reference</span><input id="fRoom" value="' + esc(n.room || '')
     + '" placeholder="e.g. Meeting room 2"></label>';
 
-  const rows = [['Type', def.label], ['Footprint', fmt(def.w, 2) + ' × ' + fmt(def.d, 2) + ' m']];
+  const ft = unitFoot(n);
+  const rows = [['Type', def.label],
+    ['Footprint', fmt(ft.w, 2) + ' × ' + fmt(ft.d, 2) + ' m' + (ft.sized ? ' <span class="chip">set</span>' : '')]];
+  if (ft.rot) rows.push(['Angle on the plan', fmt(ft.rot, 1) + '°']);
   if (cond) {
     rows.push(['On system', esc(cond.name)]);
     rows.push(['Sections back', plural(path.length, 'section')]);
@@ -2379,7 +2535,8 @@ function bcForm(n) {
     + '<option value="single"' + (n.kind === 'single' ? ' selected' : '') + '>Single BC box (one indoor unit)</option>'
     + '</select></label>'
     + '<label class="fld"><span>Model</span><input id="fModel" value="' + esc(n.model || '') + '"></label>'
-    + heightField(heightOf(n));
+    + heightField(heightOf(n))
+    + footprintFields(n);
   html += derivedBox([
     ['Runs out of it', plural(outs.length, 'run')],
     ['Indoor units served', plural(subtreeIndoors(n.id).length, 'unit')],
@@ -2496,6 +2653,32 @@ function wireInspector() {
     n.height = isNaN(v) ? undefined : v;
     render();
   });
+  /* Footprint and angle. Typed straight in, or dragged on the plan — the two
+     are the same two numbers, so whichever you use the other shows it. */
+  const setFoot = (key, v) => {
+    pushUndo('resize ' + (n.name || nodeWord(n)));
+    n[key] = Math.max(MIN_FOOT_M, v);
+    render(); openInspector();
+  };
+  on('fW', 'change', e => { const v = parseFloat(e.target.value); if (v > 0) setFoot('w', v); });
+  on('fD', 'change', e => { const v = parseFloat(e.target.value); if (v > 0) setFoot('d', v); });
+  on('fRot', 'change', e => {
+    const v = parseFloat(e.target.value);
+    if (isNaN(v)) return;
+    pushUndo('turn ' + (n.name || nodeWord(n)));
+    n.rot = ((v % 360) + 360) % 360;
+    render(); openInspector();
+  });
+  on('fSquare', 'click', () => change('square ' + (n.name || nodeWord(n)) + ' to the sheet', () => { n.rot = 0; }));
+  on('fSquareUp', 'click', () => change('make ' + (n.name || nodeWord(n)) + ' square', () => {
+    const f = unitFoot(n);
+    const s2 = Math.max(f.w, f.d);
+    n.w = s2; n.d = s2;
+  }));
+  on('fSizeReset', 'click', () => change('back to type size', () => {
+    delete n.w; delete n.d;
+  }));
+
   on('fSystem', 'change', e => change('change system type', () => { n.system = e.target.value; }));
   on('fUnit', 'change', e => change('change unit type', () => {
     n.unit = e.target.value;
@@ -3004,13 +3187,19 @@ function offsetPoly3D(poly, off) {
   return out;
 }
 
-function cuboid3D(c, w, d, h, fill, stroke) {
-  const x0 = c.X - w / 2, x1 = c.X + w / 2;
-  const y0 = c.Y - d / 2, y1 = c.Y + d / 2;
+/* `rot` is the angle in degrees the unit sits at on the plan, applied about
+   its own centre so the 3D box stands the same way round as the plan box.
+   The plan is the drawing of record; if the two disagreed, one of them would
+   be lying about where the unit is. */
+function cuboid3D(c, w, d, h, fill, stroke, rot) {
+  const r = (rot || 0) * Math.PI / 180;
+  const co = Math.cos(r), si = Math.sin(r);
+  const at = (lx, ly, z) => ({ X: c.X + lx * co - ly * si, Y: c.Y + lx * si + ly * co, Z: z });
+  const x0 = -w / 2, x1 = w / 2, y0 = -d / 2, y1 = d / 2;
   const z0 = c.Z - h / 2, z1 = c.Z + h / 2;
   const v = [
-    { X: x0, Y: y0, Z: z0 }, { X: x1, Y: y0, Z: z0 }, { X: x1, Y: y1, Z: z0 }, { X: x0, Y: y1, Z: z0 },
-    { X: x0, Y: y0, Z: z1 }, { X: x1, Y: y0, Z: z1 }, { X: x1, Y: y1, Z: z1 }, { X: x0, Y: y1, Z: z1 },
+    at(x0, y0, z0), at(x1, y0, z0), at(x1, y1, z0), at(x0, y1, z0),
+    at(x0, y0, z1), at(x1, y0, z1), at(x1, y1, z1), at(x0, y1, z1),
   ];
   const f = [[0,1,2,3],[4,5,6,7],[0,1,5,4],[1,2,6,5],[2,3,7,6],[3,0,4,7]];
   // the top face catches the light, the sides are progressively darker
@@ -3083,11 +3272,23 @@ function build3D() {
     const bc = n.type === 'bc';
     const fill = cond ? '#39404b' : (n.reached ? '#ffffff' : '#fdecea');
     const stroke = cond ? '#191d26' : (n.reached ? (bc ? '#5a5d68' : (INDOOR_EDGE[n.unit] || '#4a9fd8')) : '#bb3b2e');
-    const sw = cond ? 1.6 : bc ? (n.kind === 'single' ? 0.6 : 1.15) : 1.0;
-    const sd = cond ? 1.15 : bc ? (n.kind === 'single' ? 0.5 : 0.75) : 0.85;
-    cuboid3D(c, bs * sw, bs * sd, bs * (cond ? 1.1 : 0.5) * zk, fill, stroke).forEach(f => items.push(f));
+    /* The real footprint and the real angle, the same two figures the plan
+       draws — scaled up together, aspect kept, only when the unit would
+       otherwise be too small to see against the extent of the job. The box's
+       vertical size is nominal: nothing here knows how deep a unit is. */
+    const ft = unitFoot(n);
+    const grow = Math.max(1, bs * (cond ? 0.85 : 0.62) / Math.max(ft.w, ft.d));
+    /* The box stands up off the type's nominal casing depth rather than a
+       figure taken from the extent of the job, so a condenser looks like a
+       condenser beside a cassette instead of both being the same slab. It is
+       nominal — nothing here is told how deep a real unit is — and it is
+       pre-divided by the exaggeration so stretching the vertical moves the
+       unit's height off the floor without turning it into a column. */
+    const boxH = Math.max((ft.def && ft.def.t ? ft.def.t : 0.3) * grow, bs * 0.18);
+    cuboid3D(c, ft.w * grow, ft.d * grow, boxH * zk, fill, stroke, ft.rot)
+      .forEach(f => items.push(f));
     if (V3.labels) labels.push({
-      at: { X: c.X, Y: c.Y, Z: c.Z + bs * (cond ? 0.62 : 0.34) * zk },
+      at: { X: c.X, Y: c.Y, Z: c.Z + (boxH / 2 + 0.12) * zk },
       text: String(n.name || ''), sub: fmt(z, 2) + ' m',
     });
   });
@@ -3452,7 +3653,8 @@ async function buildReport() {
       + '<td colspan="5"></td></tr></tfoot></table>'
       + '<table class="rep"><thead><tr><th>Indoor unit</th><th>Type</th><th>Model</th>'
       + '<th class="n">Cooling kW</th><th class="n">Heating kW</th><th class="n">Height m</th>'
-      + '<th class="n">Pipe run m</th><th>Route</th><th>Room</th></tr></thead><tbody>'
+      + '<th class="n">Footprint m</th><th class="n">Pipe run m</th><th>Route</th><th>Room</th>'
+      + '</tr></thead><tbody>'
       + st.runs.slice().sort((x, y) => y.lengthM - x.lengthM).map(r =>
           '<tr><td><b>' + esc(r.unit.name) + '</b></td>'
           + '<td>' + esc((INDOOR_TYPES[r.unit.unit] || {}).label || '') + '</td>'
@@ -3460,6 +3662,8 @@ async function buildReport() {
           + '<td class="n">' + fmt(indoorKw(r.unit), 1) + '</td>'
           + '<td class="n">' + fmt(parseFloat(r.unit.kwHeat) || 0, 1) + '</td>'
           + '<td class="n">' + fmt(heightOf(r.unit), 2) + '</td>'
+          + '<td class="n">' + fmt(unitFoot(r.unit).w, 2) + ' × ' + fmt(unitFoot(r.unit).d, 2)
+          + (unitFoot(r.unit).rot ? ' @' + fmt(unitFoot(r.unit).rot, 0) + '°' : '') + '</td>'
           + '<td class="n"><b>' + fmt(r.lengthM, 2) + '</b></td>'
           + '<td class="dim">' + r.path.map(s => esc(segName(s))).join(' → ') + '</td>'
           + '<td>' + esc(r.unit.room || '') + '</td></tr>').join('')
@@ -3979,7 +4183,8 @@ async function exportXlsx() {
 
   /* ---- Units ---- */
   const units = [[HD('Name'), HD('What'), HD('Type'), HD('Model'), HD('Cooling kW'),
-    HD('Heating kW'), HD('Height m aff'), HD('System'), HD('Pipe run one way m'),
+    HD('Heating kW'), HD('Height m aff'), HD('Width m'), HD('Depth m'), HD('Angle deg'),
+    HD('Size set by hand'), HD('System'), HD('Pipe run one way m'),
     HD('Sections back'), HD('Route'), HD('Room'), HD('Piped')]];
   const order = ['condenser', 'bc', 'indoor'];
   S.nodes.filter(n => n.type !== 'branch')
@@ -3997,6 +4202,8 @@ async function exportXlsx() {
         n.type === 'bc' ? '' : N2(parseFloat(n.kw) || 0),
         n.type === 'bc' ? '' : N2(parseFloat(n.kwHeat) || 0),
         N2(heightOf(n)),
+        N2(unitFoot(n).w), N2(unitFoot(n).d), N2(unitFoot(n).rot),
+        unitFoot(n).sized ? 'yes' : 'no',
         cond ? cond.name : (n.type === 'condenser' ? n.name : ''),
         n.type === 'condenser' ? '' : N2(path.reduce((s, x) => s + x.lengthM, 0)),
         n.type === 'condenser' ? '' : path.length,
@@ -4034,7 +4241,7 @@ async function exportXlsx() {
   const sheets = [
     { name: 'Summary', rows: sum, widths: [30, 22, 60] },
     { name: 'Pipe sections', rows: pipe, widths: [12, 16, 16, 16, 7, 9, 9, 11, 10, 12, 12, 11, 11, 11, 12, 8, 34] },
-    { name: 'Units', rows: units, widths: [12, 15, 26, 20, 11, 11, 12, 14, 16, 12, 30, 20, 8] },
+    { name: 'Units', rows: units, widths: [12, 15, 26, 20, 11, 11, 12, 10, 10, 10, 15, 14, 16, 12, 30, 20, 8] },
     { name: 'Systems', rows: sys, widths: [13, 26, 18, 13, 12, 11, 15, 15, 14, 12, 12, 13, 15, 15, 17, 15, 12, 15, 12, 10, 50] },
     { name: 'Check', rows: chk, widths: [22, 100] },
   ];
@@ -4566,6 +4773,11 @@ function stepsDialog() {
     + step(done.indoor, 'Place the indoor units', 'Wall, 900 or 600 cassette, ducted, or 1-way blow '
         + 'underslung. Each is drawn at its real size once you are zoomed in far enough to read it. '
         + 'On a 2-pipe BC or a 3-pipe system, place the BC boxes too.')
+    + step(false, 'Size and turn them to suit the drawing', 'The type’s size is only a starting figure. '
+        + 'Select a unit and drag its corner handles to the size it really is, or the arm above it to turn '
+        + 'it to any angle — not just 45° or 90° — so it sits the way the building does. Hold '
+        + '<b>Shift</b> to keep the shape square, or to snap the angle to 15°. The centre never moves, so '
+        + 'no traced length changes, and the 3D view and both reports follow.')
     + step(done.traced, 'Trace the pipe', 'Start on a unit, a joint or a corner and click along the '
         + 'route. <b>Change the height in the bar before a click and that point becomes a riser</b> — '
         + 'that is how the vertical pipe gets into the length. Finish on whatever the run reaches.')
@@ -4580,6 +4792,7 @@ function stepsDialog() {
     + '<table class="mini"><tbody>'
     + '<tr><td class="mono">V H S C I B T J</td><td>select, pan, scale, condenser, indoor, BC box, trace, joint</td></tr>'
     + '<tr><td class="mono">Alt</td><td>held: flip the corner lock, or cut a joint exactly where the cursor is</td></tr>'
+    + '<tr><td class="mono">Shift</td><td>held while dragging a handle: keep a unit’s shape, or snap its angle to 15°</td></tr>'
     + '<tr><td class="mono">O</td><td>square up on or off</td></tr>'
     + '<tr><td class="mono">[ ]</td><td>lower or raise the height the next section is traced at</td></tr>'
     + '<tr><td class="mono">Enter / Esc</td><td>finish or abandon the run being traced</td></tr>'
@@ -4609,6 +4822,16 @@ sc.addEventListener('pointerdown', ev => {
   const p = toDwg(ev);
 
   if (tool === 'select') {
+    /* The handles are tested first: they sit on and just outside the box, and
+       a click on one is never meant for the unit under it. */
+    const hh = hitHandle(p);
+    if (hh) {
+      const b = unitBox(hh.node, 1 / zoom);
+      drag = { handle: hh.handle, id: hh.node.id, moved: false,
+               rot0: b.rot, foot0: { w: b.foot.w, d: b.foot.d } };
+      sc.setPointerCapture(ev.pointerId);
+      return;
+    }
     const n = hitNode(p);
     if (n) {
       drag = { id: n.id, dx: p.x - n.x, dy: p.y - n.y, moved: false };
@@ -4683,6 +4906,39 @@ sc.addEventListener('pointermove', ev => {
     sc.scrollTop  = panning.t - (ev.clientY - panning.sy);
     return;
   }
+  /* ---- resizing or turning the selected unit ----
+     Both work about the centre, because the centre is where the pipe lands
+     and it must not move: a unit is being drawn to the size it really is,
+     not re-routed. */
+  if (drag && drag.handle) {
+    const p = toDwg(ev);
+    const n = nodeById(drag.id);
+    if (!n || !(S.pxPerM > 0)) return;
+    if (!drag.moved) pushUndo((drag.handle.kind === 'rot' ? 'turn ' : 'resize ') + (n.name || nodeWord(n)));
+    drag.moved = true;
+    if (drag.handle.kind === 'rot') {
+      const a = Math.atan2(p.y - n.y, p.x - n.x) * 180 / Math.PI + 90;
+      n.rot = ev.shiftKey ? Math.round(a / 15) * 15 : Math.round(a * 10) / 10;
+      n.rot = ((n.rot % 360) + 360) % 360;
+    } else {
+      // the drag point in the unit's own frame gives the new half-extents
+      const q = toLocal(n, p, drag.rot0);
+      let w = Math.max(MIN_FOOT_M, Math.abs(q.x) * 2 / S.pxPerM);
+      let d = Math.max(MIN_FOOT_M, Math.abs(q.y) * 2 / S.pxPerM);
+      if (ev.shiftKey) {                       // keep it the shape it already is
+        const r0 = drag.foot0.d / drag.foot0.w;
+        if (Math.abs(q.x) / Math.max(drag.foot0.w, 1e-6) > Math.abs(q.y) / Math.max(drag.foot0.d, 1e-6)) d = w * r0;
+        else w = d / r0;
+      }
+      n.w = Math.round(w * 1000) / 1000;
+      n.d = Math.round(d * 1000) / 1000;
+    }
+    /* The figures are drawn beside the box while it is being dragged, so the
+       inspector is left alone until the drag ends rather than being rebuilt
+       on every move. */
+    render();
+    return;
+  }
   if (drag) {
     const p = toDwg(ev);
     const n = nodeById(drag.id);
@@ -4702,6 +4958,12 @@ sc.addEventListener('pointermove', ev => {
   if (draft || tool === 'trace' || tool === 'joint' || PLACE_TOOLS.indexOf(tool) >= 0) {
     setOverride(ev.altKey);
     hoverPt = toDwg(ev); render();
+    return;
+  }
+  // the handles say what they do before they are grabbed
+  if (tool === 'select') {
+    const hh = hitHandle(toDwg(ev));
+    sc.style.cursor = hh ? (hh.handle.kind === 'rot' ? 'grab' : 'nwse-resize') : '';
   }
 });
 
