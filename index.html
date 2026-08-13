@@ -444,6 +444,37 @@
   }
   table.sched tfoot td.n { font-family: 'Azeret Mono', monospace; }
 
+  /* the bulk bar over the line-size schedule: tick the sections, set the
+     sizes once, apply to all of them */
+  .bulkbar {
+    position: sticky; top: 0; z-index: 3;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 8px 12px; background: var(--paper-2); border-bottom: 1px solid var(--rule-2);
+  }
+  .bulkbar .grp { display: flex; align-items: center; gap: 5px; }
+  .bulkbar label {
+    font-family: 'Azeret Mono', monospace; font-size: 8.5px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .bulkbar select {
+    padding: 4px 6px; border: 1px solid var(--rule-2); border-radius: 3px;
+    background: var(--white); color: var(--ink); min-height: 28px; font-size: 12px;
+  }
+  .bulkbar .count {
+    font-family: 'Azeret Mono', monospace; font-size: 11.5px; color: var(--ink-soft);
+    padding: 0 2px;
+  }
+  .bulkbar .sp { flex: 1; }
+  table.sched td.tick, table.sched th.tick { width: 30px; text-align: center; padding: 4px 6px; }
+  table.sched td.tick input { width: 15px; height: 15px; margin: 0; }
+  table.sched select.cell {
+    width: 100%; min-width: 74px; padding: 3px 5px; border: 1px solid var(--rule-2);
+    border-radius: 3px; background: var(--white); color: var(--ink);
+    font-family: 'Azeret Mono', monospace; font-size: 11.5px; min-height: 26px;
+  }
+  table.sched select.cell:disabled { background: var(--paper-2); color: var(--muted); }
+  table.sched select.cell.unset { color: var(--muted); }
+
   /* the system limits panel under the schedule */
   .limits { border-top: 1px solid var(--rule); background: var(--paper-2); padding: 11px 14px; font-size: 12px; }
   .limits h4 {
@@ -642,6 +673,7 @@
           <h3 id="schedTitle">Pipework schedule</h3>
           <div class="segbtn" id="schedTabs">
             <button data-tab="pipe" class="on">Pipe sections</button>
+            <button data-tab="size">Line sizes</button>
             <button data-tab="unit">Units</button>
             <button data-tab="sys">Systems</button>
           </div>
@@ -650,6 +682,7 @@
           <button class="btn ghost sm" id="bSchedClose">Close</button>
         </div>
         <div class="drawer-bd">
+          <div class="bulkbar" id="schedTools" style="display:none"></div>
           <table class="sched" id="schedTable"></table>
         </div>
         <div class="limits" id="schedLimits" style="display:none"></div>
@@ -833,6 +866,52 @@ const LINES = {
 function linesFor(pipes) { return pipes === 3 ? ['liquid', 'hpgas', 'gas'] : ['liquid', 'gas']; }
 
 /* ==========================================================================
+   LINE SIZES
+   Refrigerant pipe is bought and sized in imperial, in the steps below and
+   very little else, so the sizes are a list to pick from rather than a box to
+   type a number into — a typed "12mm" is a size nobody can order.
+
+   These are still the manufacturer's figures: the selection software says
+   what each section needs against the model and the length. This tool holds
+   what was selected and carries it to the schedule and both reports.
+   ========================================================================== */
+const PIPE_SIZES = [
+  { key: '1/4',   label: '1/4"',   od: 6.35 },
+  { key: '3/8',   label: '3/8"',   od: 9.52 },
+  { key: '1/2',   label: '1/2"',   od: 12.70 },
+  { key: '5/8',   label: '5/8"',   od: 15.88 },
+  { key: '3/4',   label: '3/4"',   od: 19.05 },
+  { key: '7/8',   label: '7/8"',   od: 22.22 },
+  { key: '1-1/8', label: '1 1/8"', od: 28.58 },
+  { key: '1-3/8', label: '1 3/8"', od: 34.93 },
+  { key: '1-5/8', label: '1 5/8"', od: 41.28 },
+];
+const SIZE_BY_KEY = {};
+PIPE_SIZES.forEach(z => { SIZE_BY_KEY[z.key] = z; });
+function sizeLabel(key) { const z = SIZE_BY_KEY[key]; return z ? z.label : ''; }
+function sizeOd(key) { const z = SIZE_BY_KEY[key]; return z ? z.od : 0; }
+/* Which field on a section holds which line's size. */
+const SIZE_FIELD = { liquid: 'sizeLiquid', gas: 'sizeGas', hpgas: 'sizeHp' };
+
+/* ==========================================================================
+   INSULATION
+   Every refrigerant line is insulated over its whole length, each pipe
+   separately, so the insulation figure is the pipe metres and not the route.
+   adi standard is 1/2" wall; 3/8" is the thinner option where there is no
+   room for it.
+   ========================================================================== */
+const INSULATION = {
+  '1/2':  { label: '1/2" wall', wall: 12.7 },
+  '3/8':  { label: '3/8" wall', wall: 9.5 },
+  'none': { label: 'None',      wall: 0 },
+};
+const INSULATION_ORDER = ['1/2', '3/8', 'none'];
+function insulationOf(sg) {
+  const k = sg && sg.insulation;
+  return INSULATION[k] ? k : (S.settings.insulation || '1/2');
+}
+
+/* ==========================================================================
    PROJECT STATE
    ========================================================================== */
 const S = {
@@ -858,6 +937,7 @@ const S = {
     defaultSystem: 'vrf2',
     defaultIndoor: 'cass600',
     defaultKw: 3.5,
+    insulation: '1/2',           // the wall a section gets unless it says otherwise
   },
   setupDone: false,
 };
@@ -1175,6 +1255,7 @@ function rollUpDuty() {
 }
 
 function solve() {
+  syncSegEnds();
   buildTree();
   rollUpDuty();
   S.segs.forEach(sg => {
@@ -1290,6 +1371,8 @@ function totals() {
     bc: S.nodes.filter(n => n.type === 'bc').length,
     branches: S.nodes.filter(n => n.type === 'branch').length,
     kwIndoor: S.nodes.filter(n => n.type === 'indoor').reduce((t, n) => t + indoorKw(n), 0),
+    insulatedM: segs.reduce((t, s) => t + (insulationOf(s) === 'none' ? 0 : s.pipeM), 0),
+    sized: segs.filter(s => linesFor(s.pipes).every(kk => s[SIZE_FIELD[kk]])).length,
     unreached: S.nodes.filter(n => (n.type === 'indoor' || n.type === 'bc') && !n.reached).length,
     orphanSegs: segs.filter(s => s.orphan).length,
   };
@@ -1322,7 +1405,7 @@ function applyZoom() {
 function setZoom(z, anchor) {
   const sc = el('scroller');
   const old = zoom;
-  zoom = clamp(z, 0.05, 10);
+  zoom = clamp(z, 0.05, 60);
   const cx = anchor ? anchor.x : (sc.scrollLeft + sc.clientWidth / 2) / old;
   const cy = anchor ? anchor.y : (sc.scrollTop + sc.clientHeight / 2) / old;
   applyZoom();
@@ -1383,6 +1466,43 @@ function unitBox(n, k) {
   const f = Math.max(1, (n.type === 'condenser' ? 46 : 38) * k / Math.max(w, d));
   return { w: w * f, d: d * f, def, rot: f0.rot, foot: f0 };
 }
+/* ---------- where the pipe actually lands on a unit ----------
+   A refrigerant connection is a stub on the side or the end of the casing,
+   not a point in the middle of it, and on a large unit the difference is real
+   metres. So a section remembers where on its end unit it connects, as a
+   fraction of that unit's half-extents in the unit's own frame: `{u, v}` with
+   0,0 the centre and ±1 the edge. Kept as a fraction rather than a distance
+   so it stays on the same corner of the casing when the unit is resized, and
+   turns with it when the unit is turned.
+
+   This is measured against the unit's TRUE footprint, never the legibility
+   minimum `unitBox()` applies when zoomed out — otherwise a connection would
+   slide as you zoomed and every length would move with it. */
+function unitBoxTrue(n) {
+  const f = unitFoot(n);
+  if (!(S.pxPerM > 0)) return { w: 46, d: 28, rot: f.rot };
+  return { w: f.w * S.pxPerM, d: f.d * S.pxPerM, rot: f.rot };
+}
+function connPoint(n, off) {
+  if (!n) return null;
+  if (!off || n.type === 'branch') return { x: n.x, y: n.y };
+  const b = unitBoxTrue(n);
+  return fromLocal(n, { x: clamp(off.u, -1, 1) * b.w / 2,
+                        y: clamp(off.v, -1, 1) * b.d / 2 }, b.rot);
+}
+/* The ends of every section, put back where their units say they are. Called
+   at the top of solve(), so moving, resizing or turning a unit carries its
+   pipework with it without anything else having to remember to. */
+function syncSegEnds() {
+  S.segs.forEach(sg => {
+    if (!sg.pts || sg.pts.length < 2) return;
+    const a = connPoint(nodeById(sg.a), sg.aOff);
+    const b = connPoint(nodeById(sg.b), sg.bOff);
+    if (a) { sg.pts[0].x = a.x; sg.pts[0].y = a.y; }
+    if (b) { sg.pts[sg.pts.length - 1].x = b.x; sg.pts[sg.pts.length - 1].y = b.y; }
+  });
+}
+
 /* Half the axis-aligned extent of the box once it has been turned. Labels are
    placed off this, so they clear a rotated unit instead of sitting on it. */
 function unitHalf(b) {
@@ -1587,6 +1707,21 @@ function render() {
 
   // ---- units ----
   S.nodes.forEach(n => drawNode(g, n, k));
+
+  /* ---- connection points ----
+     Drawn after the units, because the box would otherwise cover them. Only
+     where the pipe lands somewhere other than the centre, so a drawing is
+     not peppered with rings saying nothing. */
+  S.segs.forEach(sg => {
+    [[sg.aOff, sg.pts[0], sg.a], [sg.bOff, sg.pts[sg.pts.length - 1], sg.b]].forEach(([off, p, id]) => {
+      if (!off || !p) return;
+      const n = nodeById(id);
+      if (!n || n.type === 'branch') return;
+      g.appendChild(mk('circle', { cx: p.x, cy: p.y, r: 3.4 * k,
+        fill: 'var(--white)', stroke: 'var(--graphite)', 'stroke-width': 1.6 * k }));
+      g.appendChild(mk('circle', { cx: p.x, cy: p.y, r: 1.1 * k, fill: 'var(--graphite)' }));
+    });
+  });
 
   ov.innerHTML = '';
   ov.appendChild(g);
@@ -1956,6 +2091,7 @@ function renderStatus() {
   html += cell('Indoor units', String(t.indoors));
   html += cell('Route one way', fmt(t.lengthM, 1) + ' m');
   html += cell('Pipe total', fmt(t.pipeM, 1) + ' m');
+  if (t.sections) html += cell('Sized', t.sized + ' / ' + t.sections, t.sized < t.sections);
   if (t.unreached) html += cell('Not piped', String(t.unreached), true);
   if (t.orphanSegs) html += cell('Loose sections', String(t.orphanSegs), true);
   box.innerHTML = html;
@@ -2012,8 +2148,9 @@ const HINTS = {
   bc: 'Pick the box, then click where it sits.',
   select: 'Drag a selected unit’s corners to resize it, or the arm above it to turn it. '
        + '<kbd>Shift</kbd> keeps its shape, or snaps the angle to 15°.',
-  trace: 'Click along the route. Change the height before a click to start a riser. Finish on a unit, '
-       + 'joint or corner. <kbd>Alt</kbd> frees one corner, or branches into a run already traced.',
+  trace: 'Click along the route. Change the height before a click to start a riser. Finish anywhere on a '
+       + 'unit &mdash; the pipe connects where you click it. <kbd>Alt</kbd> frees one corner, or branches '
+       + 'into a run already traced.',
   pan: 'Drag to move around the drawing.',
   joint: 'Click along a run to cut a branch joint into it, then trace on from it.',
 };
@@ -2180,11 +2317,14 @@ function splitSegment(sg, hit) {
 
   const other = {
     id: nid(), a: j.id, b: sg.b, pts: tail,
+    aOff: null, bOff: sg.bOff || null,
     ref: sg.ref, name: '', height: sg.height,
     pipesOverride: sg.pipesOverride, extraRise: sg.extraRise,
-    sizeLiquid: sg.sizeLiquid, sizeGas: sg.sizeGas, sizeHp: sg.sizeHp, note: sg.note,
+    sizeLiquid: sg.sizeLiquid, sizeGas: sg.sizeGas, sizeHp: sg.sizeHp,
+    insulation: sg.insulation, note: sg.note,
   };
   sg.b = j.id;
+  sg.bOff = null;
   sg.pts = head;
   S.segs.push(other);
   return j;
@@ -2215,29 +2355,48 @@ function nodeWord(n) {
        : n.type === 'bc' ? (n.kind === 'single' ? 'BC box' : 'BC controller')
        : 'joint';
 }
-function snapNode(n) {
-  return { kind: 'node', node: n, at: { x: n.x, y: n.y }, what: nodeWord(n), name: n.name || '' };
+/* Where a click at p would land on this unit. Anywhere on the block counts —
+   that is the whole point — with a magnet at the centre so "just connect it"
+   is still one click and old take-offs keep connecting where they always did. */
+function snapNodeAt(n, p) {
+  if (n.type === 'branch' || !p) {
+    return { kind: 'node', node: n, at: { x: n.x, y: n.y }, off: null,
+             what: nodeWord(n), name: n.name || '' };
+  }
+  const b = unitBoxTrue(n);
+  const q = toLocal(n, p, b.rot);
+  let u = clamp(q.x / Math.max(b.w / 2, 1e-6), -1, 1);
+  let v = clamp(q.y / Math.max(b.d / 2, 1e-6), -1, 1);
+  if (Math.abs(u) < 0.18 && Math.abs(v) < 0.18) { u = 0; v = 0; }
+  const off = (u === 0 && v === 0) ? null : { u: +u.toFixed(4), v: +v.toFixed(4) };
+  return { kind: 'node', node: n, at: connPoint(n, off), off,
+           what: nodeWord(n) + (off ? ' edge' : ''), name: n.name || '' };
 }
+function snapNode(n) { return snapNodeAt(n, null); }
 function snapVertex(sg, i) {
   return { kind: 'vertex', seg: sg, i, at: { x: sg.pts[i].x, y: sg.pts[i].y },
            what: 'corner', name: segName(sg) };
 }
-function snapCandidates() {
-  const list = [];
-  S.nodes.forEach(n => list.push(snapNode(n)));
-  S.segs.forEach(sg => { for (let i = 1; i < sg.pts.length - 1; i++) list.push(snapVertex(sg, i)); });
-  return list;
-}
-
 /* Pure — it works out what a click at p would connect to and changes nothing,
    so the same answer can be drawn and then acted on. */
 function snapAt(p, skipId) {
   const tol = SNAP_PX / zoom;
   let best = null;
-  snapCandidates().forEach(c => {
-    if (skipId && c.kind === 'node' && c.node.id === skipId) return;
-    const d = dist(c.at, p);
-    if (d <= tol && (!best || d < best.d)) best = Object.assign({ d }, c);
+  const take = (d, c) => { if (d <= tol && (!best || d < best.d)) best = Object.assign({ d }, c); };
+
+  /* Units are tested against their whole block rather than their centre, so a
+     click on the corner of a big ducted unit connects to that corner. The
+     distance is negative inside the box, which is what makes a unit win over
+     a corner of some run passing across it. */
+  S.nodes.forEach(n => {
+    if (skipId && n.id === skipId) return;
+    if (n.type === 'branch') { take(dist(n, p), snapNodeAt(n, p)); return; }
+    const b = unitBoxTrue(n);
+    const q = toLocal(n, p, b.rot);
+    take(Math.max(Math.abs(q.x) - b.w / 2, Math.abs(q.y) - b.d / 2), snapNodeAt(n, p));
+  });
+  S.segs.forEach(sg => {
+    for (let i = 1; i < sg.pts.length - 1; i++) take(dist(sg.pts[i], p), snapVertex(sg, i));
   });
   if (best) return best;
 
@@ -2250,8 +2409,8 @@ function snapAt(p, skipId) {
   let bp = null;
   const consider = c => { const d = dist(c.at, p); if (!bp || d < bp.d) bp = Object.assign({ d }, c); };
   const na = nodeById(h.seg.a), nb = nodeById(h.seg.b);
-  if (na && na.id !== skipId) consider(snapNode(na));
-  if (nb && nb.id !== skipId) consider(snapNode(nb));
+  if (na && na.id !== skipId) consider(snapNodeAt(na, p));
+  if (nb && nb.id !== skipId) consider(snapNodeAt(nb, p));
   for (let i = 1; i < h.seg.pts.length - 1; i++) consider(snapVertex(h.seg, i));
   if (bp) bp.pulled = true;
   return bp;
@@ -2259,11 +2418,13 @@ function snapAt(p, skipId) {
 
 /* Act on a snap: give back the node to connect to, making one if the snap was
    a corner or a point along a run. */
+/* Gives back the node to join to and where on it, making a joint first if the
+   snap was a corner or a point along a run. */
 function connectAt(sn) {
   if (!sn) return null;
-  if (sn.kind === 'node') return sn.node;
-  if (sn.kind === 'vertex') return promoteVertex(sn.seg, sn.i);
-  if (sn.kind === 'run') return splitSegment(sn.seg, sn.r);
+  if (sn.kind === 'node') return { node: sn.node, off: sn.off || null, at: sn.at };
+  if (sn.kind === 'vertex') { const n = promoteVertex(sn.seg, sn.i); return { node: n, off: null, at: { x: n.x, y: n.y } }; }
+  if (sn.kind === 'run') { const n = splitSegment(sn.seg, sn.r); return { node: n, off: null, at: { x: n.x, y: n.y } }; }
   return null;
 }
 
@@ -2299,7 +2460,7 @@ function dedupePts(pts) {
 
 function stubPx() { return clamp(S.pxPerM > 0 ? S.pxPerM * 0.4 : 8, 4, 30); }
 
-function finishTrace(endNode) {
+function finishTrace(endNode, endOff) {
   if (!draft || draft.pts.length < 2) { draft = null; render(); return; }
   pushUndo('trace a section');
   const pts = dedupePts(draft.pts);
@@ -2308,9 +2469,10 @@ function finishTrace(endNode) {
   }
   const sg = {
     id: nid(), a: draft.startNode, b: endNode, pts,
+    aOff: draft.startOff || null, bOff: endOff || null,
     ref: 'Run ' + (S.segs.length + 1), name: '',
     height: null, pipesOverride: 0, extraRise: 0,
-    sizeLiquid: '', sizeGas: '', sizeHp: '', note: '',
+    sizeLiquid: '', sizeGas: '', sizeHp: '', insulation: '', note: '',
   };
   S.segs.push(sg);
   draft = null;
@@ -2396,7 +2558,10 @@ function mergeAtBranch(j, nb) {
   const p2 = ptsFrom(s2).slice(1);                // joint -> ...
   const far1 = s1.a === j.id ? s1.b : s1.a;
   const far2 = s2.a === j.id ? s2.b : s2.a;
+  const off1 = s1.a === j.id ? s1.bOff : s1.aOff;
+  const off2 = s2.a === j.id ? s2.bOff : s2.aOff;
   s1.a = far1; s1.b = far2;
+  s1.aOff = off1 || null; s1.bOff = off2 || null;
   s1.pts = dedupePts(p1.concat(p2));
   S.segs = S.segs.filter(s => s.id !== s2.id);
   S.nodes = S.nodes.filter(x => x.id !== j.id);
@@ -2433,6 +2598,17 @@ function openInspector() {
   el('insBody').innerHTML = html;
   body.classList.add('insp');
   wireInspector();
+}
+
+/* Refrigerant pipe comes in the imperial steps in PIPE_SIZES and nothing in
+   between, so every size on this drawing is picked from that list. */
+function sizeSelect(id, val, title, cls) {
+  return '<select id="' + id + '"' + (cls ? ' class="' + cls + '"' : '')
+    + ' title="' + esc(title || '') + '">'
+    + '<option value="">—</option>'
+    + PIPE_SIZES.map(z => '<option value="' + z.key + '"' + (val === z.key ? ' selected' : '') + '>'
+        + esc(z.label) + '</option>').join('')
+    + '</select>';
 }
 
 function derivedBox(rows) {
@@ -2642,10 +2818,18 @@ function segForm(sg) {
 
   html += '<div class="fld"><span>Line sizes <em>from the manufacturer’s selection</em></span>'
     + '<div class="' + (keys.length === 3 ? 'row3' : 'row2') + '">'
-    + keys.map(kk => '<input id="fSize_' + kk + '" value="'
-        + esc(sg[kk === 'liquid' ? 'sizeLiquid' : kk === 'gas' ? 'sizeGas' : 'sizeHp'] || '')
-        + '" placeholder="' + esc(LINES[kk].label) + '" title="' + esc(LINES[kk].label) + '">').join('')
+    + keys.map(kk => sizeSelect('fSize_' + kk, sg[SIZE_FIELD[kk]], LINES[kk].label)).join('')
+    + '</div>'
+    + '<div style="display:flex;gap:10px;margin-top:5px;font-size:10px;color:var(--muted)">'
+    + keys.map(kk => '<span style="flex:1">' + esc(LINES[kk].label) + '</span>').join('')
     + '</div></div>';
+
+  html += '<label class="fld"><span>Insulation <em>wall thickness, on every line in this section</em></span>'
+    + '<select id="fIns">'
+    + INSULATION_ORDER.map(k2 => '<option value="' + k2 + '"'
+        + (insulationOf(sg) === k2 ? ' selected' : '') + '>' + esc(INSULATION[k2].label)
+        + (k2 === (S.settings.insulation || '1/2') ? ' — default' : '') + '</option>').join('')
+    + '</select></label>';
 
   html += '<label class="fld"><span>Note</span><textarea id="fNote" placeholder="anything that has to travel '
     + 'with this section">' + esc(sg.note || '') + '</textarea></label>';
@@ -2661,6 +2845,8 @@ function segForm(sg) {
   if (r.extra > 0.005) rows.push(['Over the obstruction', fmt(r.extra, 2) + ' m']);
   rows.push(['<b>One direction</b>', '<b>' + fmt(sg.lengthM, 2) + ' m</b>']);
   rows.push(['Pipe metres', fmt(sg.pipeM, 2) + ' m  (× ' + sg.pipes + ')']);
+  const ins = insulationOf(sg);
+  if (ins !== 'none') rows.push(['Insulation', fmt(sg.pipeM, 2) + ' m of ' + INSULATION[ins].label]);
   if (sg.nIndoor) rows.push(['Carries', plural(sg.nIndoor, 'indoor unit') + ', ' + fmt(sg.kw, 1) + ' kW']);
   html += derivedBox(rows);
 
@@ -2731,9 +2917,20 @@ function wireInspector() {
   on('fPipes', 'change', e => change('change pipe count', () => {
     sg.pipesOverride = parseInt(e.target.value, 10) || 0;
   }));
-  ['liquid', 'gas', 'hpgas'].forEach(kk => on('fSize_' + kk, 'input', e => {
-    sg[kk === 'liquid' ? 'sizeLiquid' : kk === 'gas' ? 'sizeGas' : 'sizeHp'] = e.target.value;
+  const sized = () => {
+    render(); openInspector();
+    if (schedTab === 'size' && el('drawer').classList.contains('on')) renderSizeSchedule();
+  };
+  ['liquid', 'gas', 'hpgas'].forEach(kk => on('fSize_' + kk, 'change', e => {
+    pushUndo('set a line size');
+    sg[SIZE_FIELD[kk]] = e.target.value;
+    sized();
   }));
+  on('fIns', 'change', e => {
+    pushUndo('set insulation');
+    sg.insulation = e.target.value;
+    sized();
+  });
 
   if (sg) {
     el('insBody').querySelectorAll('[data-hp]').forEach(inp => {
@@ -2953,9 +3150,157 @@ function renderSchedule() {
   solve();
   el('schedTabs').querySelectorAll('button').forEach(b =>
     b.classList.toggle('on', b.dataset.tab === schedTab));
+  el('schedTools').style.display = schedTab === 'size' ? 'flex' : 'none';
   if (schedTab === 'pipe') renderPipeSchedule();
+  else if (schedTab === 'size') renderSizeSchedule();
   else if (schedTab === 'unit') renderUnitSchedule();
   else renderSystemSchedule();
+}
+
+/* ==========================================================================
+   LINE SIZES
+   Sizes are typed in per section from the manufacturer's selection, and a
+   selection hands back the same size for a whole run at a time — so this is
+   built to tick a set of sections and set them together, rather than opening
+   each one in turn. Every row is still editable on its own.
+   ========================================================================== */
+const sizeSel = new Set();
+
+function renderSizeSchedule() {
+  el('schedTitle').textContent = 'Line sizes';
+  const segs = S.segs.slice().sort((a, b) =>
+    String(a.sysId).localeCompare(String(b.sysId)) ||
+    String(a.ref).localeCompare(String(b.ref), 'en', { numeric: true }));
+  // forget anything ticked that has since been deleted
+  Array.from(sizeSel).forEach(id => { if (!segById(id)) sizeSel.delete(id); });
+
+  const done = segs.filter(sg => linesFor(sg.pipes).every(kk => sg[SIZE_FIELD[kk]])).length;
+  el('schedNote').innerHTML = done + ' of ' + plural(segs.length, 'section') + ' sized';
+
+  /* ---- the bulk bar ---- */
+  el('schedTools').innerHTML =
+      '<div class="grp"><button class="btn ghost sm" id="bkAll">Select all</button>'
+    + '<button class="btn ghost sm" id="bkNone">None</button></div>'
+    + '<span class="count" id="bkCount"></span>'
+    + '<div class="sp"></div>'
+    + '<div class="grp"><label>Liquid</label>' + sizeSelect('bkLiquid', '', 'Liquid line') + '</div>'
+    + '<div class="grp"><label>Gas</label>' + sizeSelect('bkGas', '', 'Suction gas line') + '</div>'
+    + '<div class="grp"><label>HP gas</label>' + sizeSelect('bkHp', '', 'High-pressure gas line') + '</div>'
+    + '<div class="grp"><label>Insulation</label><select id="bkIns"><option value="">—</option>'
+    + INSULATION_ORDER.map(k2 => '<option value="' + k2 + '">' + esc(INSULATION[k2].label) + '</option>').join('')
+    + '</select></div>'
+    + '<button class="btn go sm" id="bkApply">Apply to ticked</button>';
+
+  let html = '<thead><tr>'
+    + '<th class="tick"><input type="checkbox" id="bkHead" title="Tick every section"></th>'
+    + '<th>Section</th><th>System</th>'
+    + '<th class="n">Pipes</th><th class="n">One way<i>m</i></th><th class="n">Pipe<i>m</i></th>'
+    + '<th>Liquid</th><th>Suction gas</th><th>HP gas</th><th>Insulation</th>'
+    + '</tr></thead><tbody>';
+
+  let lastSys = null;
+  segs.forEach(sg => {
+    const cond = nodeById(sg.sysId);
+    const sysName = cond ? cond.name : 'Not on a system';
+    if (sysName !== lastSys) {
+      lastSys = sysName;
+      html += '<tr class="grp"><td colspan="10">' + esc(sysName)
+        + ' <button class="btn ghost sm" data-picksys="' + (cond ? cond.id : 0)
+        + '" style="margin-left:8px">Tick this system</button></td></tr>';
+    }
+    const three = sg.pipes === 3;
+    html += '<tr data-row="' + sg.id + '">'
+      + '<td class="tick"><input type="checkbox" data-pick="' + sg.id + '"'
+      + (sizeSel.has(sg.id) ? ' checked' : '') + '></td>'
+      + '<td><b>' + esc(segName(sg)) + '</b></td>'
+      + '<td class="dim">' + esc(sysName) + '</td>'
+      + '<td class="n">' + sg.pipes + '</td>'
+      + '<td class="n">' + fmt(sg.lengthM, 2) + '</td>'
+      + '<td class="n">' + fmt(sg.pipeM, 2) + '</td>'
+      + '<td>' + sizeSelect('', sg.sizeLiquid, 'Liquid', 'cell' + (sg.sizeLiquid ? '' : ' unset'))
+          .replace('<select id=""', '<select data-set="liquid" data-seg="' + sg.id + '"') + '</td>'
+      + '<td>' + sizeSelect('', sg.sizeGas, 'Suction gas', 'cell' + (sg.sizeGas ? '' : ' unset'))
+          .replace('<select id=""', '<select data-set="gas" data-seg="' + sg.id + '"') + '</td>'
+      + '<td>' + (three
+          ? sizeSelect('', sg.sizeHp, 'HP gas', 'cell' + (sg.sizeHp ? '' : ' unset'))
+              .replace('<select id=""', '<select data-set="hpgas" data-seg="' + sg.id + '"')
+          : '<select class="cell" disabled><option>n/a</option></select>') + '</td>'
+      + '<td><select class="cell" data-ins="' + sg.id + '">'
+      + INSULATION_ORDER.map(k2 => '<option value="' + k2 + '"'
+          + (insulationOf(sg) === k2 ? ' selected' : '') + '>' + esc(INSULATION[k2].label) + '</option>').join('')
+      + '</select></td></tr>';
+  });
+  html += '</tbody>';
+  el('schedTable').innerHTML = html;
+
+  const t = el('schedTable');
+  t.querySelectorAll('[data-pick]').forEach(cb => cb.addEventListener('change', () => {
+    const id = parseInt(cb.dataset.pick, 10);
+    if (cb.checked) sizeSel.add(id); else sizeSel.delete(id);
+    updateBulkCount();
+  }));
+  t.querySelectorAll('[data-picksys]').forEach(b => b.addEventListener('click', () => {
+    const sys = parseInt(b.dataset.picksys, 10);
+    S.segs.forEach(sg => { if ((sg.sysId || 0) === sys) sizeSel.add(sg.id); });
+    renderSizeSchedule();
+  }));
+  /* The inspector may be showing one of these sections, so it is redrawn with
+     them — a drawer and an inspector disagreeing about the same section is
+     the kind of thing that gets a wrong size ordered. */
+  const afterEdit = () => { render(); if (sel) openInspector(); renderSizeSchedule(); };
+  t.querySelectorAll('[data-set]').forEach(sel2 => sel2.addEventListener('change', () => {
+    pushUndo('set a line size');
+    const sg = segById(parseInt(sel2.dataset.seg, 10));
+    if (sg) sg[SIZE_FIELD[sel2.dataset.set]] = sel2.value;
+    afterEdit();
+  }));
+  t.querySelectorAll('[data-ins]').forEach(sel2 => sel2.addEventListener('change', () => {
+    pushUndo('set insulation');
+    const sg = segById(parseInt(sel2.dataset.ins, 10));
+    if (sg) sg.insulation = sel2.value;
+    afterEdit();
+  }));
+
+  el('bkAll').addEventListener('click', () => { segs.forEach(sg => sizeSel.add(sg.id)); renderSizeSchedule(); });
+  el('bkNone').addEventListener('click', () => { sizeSel.clear(); renderSizeSchedule(); });
+  el('bkHead').addEventListener('change', e => {
+    if (e.target.checked) segs.forEach(sg => sizeSel.add(sg.id)); else sizeSel.clear();
+    renderSizeSchedule();
+  });
+  el('bkApply').addEventListener('click', applyBulkSizes);
+  updateBulkCount();
+  renderLimits();
+}
+
+function updateBulkCount() {
+  const c = el('bkCount');
+  if (c) c.textContent = sizeSel.size ? plural(sizeSel.size, 'section') + ' ticked' : 'nothing ticked';
+  const h = el('bkHead');
+  if (h) h.checked = sizeSel.size > 0 && sizeSel.size === S.segs.length;
+}
+
+function applyBulkSizes() {
+  if (!sizeSel.size) { toast('Tick the sections to set first'); return; }
+  const liq = el('bkLiquid').value, gas = el('bkGas').value;
+  const hp = el('bkHp').value, ins = el('bkIns').value;
+  if (!liq && !gas && !hp && !ins) { toast('Pick a size or an insulation to apply'); return; }
+  let n = 0, skipped = 0;
+  asOneUndo('set sizes on ' + plural(sizeSel.size, 'section'), () => {
+    sizeSel.forEach(id => {
+      const sg = segById(id);
+      if (!sg) return;
+      if (liq) sg.sizeLiquid = liq;
+      if (gas) sg.sizeGas = gas;
+      /* A 2-pipe section has no high-pressure gas line, so it is left alone
+         rather than being given a size it does not carry. */
+      if (hp) { if (sg.pipes === 3) sg.sizeHp = hp; else skipped++; }
+      if (ins) sg.insulation = ins;
+      n++;
+    });
+  });
+  render(); if (sel) openInspector(); renderSizeSchedule();
+  toast('Set on ' + plural(n, 'section')
+    + (skipped ? ' — HP gas skipped on ' + plural(skipped, '2-pipe section') : ''));
 }
 
 function renderPipeSchedule() {
@@ -3002,8 +3347,8 @@ function renderPipeSchedule() {
           + '<td class="n"><b>' + fmt(sg.lengthM, 2) + '</b></td>'
           + '<td class="n">' + fmt(sg.pipeM, 2) + '</td>'
           + '<td class="n dim">' + (Math.abs(hi - lo) < 0.005 ? fmt(hi, 2) : fmt(lo, 2) + '–' + fmt(hi, 2)) + '</td>'
-          + '<td class="dim">' + esc(sg.sizeLiquid || '—') + '</td>'
-          + '<td class="dim">' + esc(sg.sizeGas || '—') + '</td>'
+          + '<td class="dim">' + esc(sizeLabel(sg.sizeLiquid) || '—') + '</td>'
+          + '<td class="dim">' + esc(sizeLabel(sg.sizeGas) || '—') + '</td>'
           + '<td class="n dim">' + (sg.nIndoor || 0) + '</td>'
           + '</tr>';
       });
@@ -3688,7 +4033,8 @@ async function buildReport() {
     { h: 'One way m', n: true, strong: true }, { h: 'Pipe m', n: true },
     { h: 'Height m', n: true },
     { h: 'Liquid', n: true, opt: true }, { h: 'Gas', n: true, opt: true },
-    { h: 'HP gas', n: true, opt: true }, { h: 'Note', opt: true },
+    { h: 'HP gas', n: true, opt: true }, { h: 'Insulation', opt: true },
+    { h: 'Note', opt: true },
   ];
   const sectionRow = sg => {
     const up = nodeById(sg.up != null ? sg.up : sg.a);
@@ -3699,7 +4045,10 @@ async function buildReport() {
       up ? (up.name || nodeWord(up)) : '—', dn ? (dn.name || nodeWord(dn)) : '—',
       String(sg.pipes), fmt(sg.routeM, 2), fmt(sg.riseM, 2), fmt(sg.lengthM, 2), fmt(sg.pipeM, 2),
       (Math.abs(hi - lo) < 0.005 ? fmt(hi, 2) : fmt(lo, 2) + '–' + fmt(hi, 2)),
-      sg.sizeLiquid || '', sg.sizeGas || '', sg.sizeHp || '', sg.note || ''];
+      sizeLabel(sg.sizeLiquid), sizeLabel(sg.sizeGas),
+      sg.pipes === 3 ? sizeLabel(sg.sizeHp) : '',
+      insulationOf(sg) === (S.settings.insulation || '1/2') ? '' : INSULATION[insulationOf(sg)].label,
+      sg.note || ''];
   };
   const sortedSegs = segs => segs.slice()
     .sort((x, y) => String(x.ref).localeCompare(String(y.ref), 'en', { numeric: true }));
@@ -3938,13 +4287,16 @@ async function buildReport() {
   ${fig('Branch joints', String(t.branches))}
   ${fig('Sections', String(t.sections))}
   ${fig('Indoor duty', fmt(t.kwIndoor, 1) + ' kW')}
+  ${fig('Insulation', fmt(t.insulatedM, 1) + ' m')}
 </div>
 <p class="lede">
   <b>Route, one direction</b> is the installed route measured once — the plan run plus every riser and
   drop. <b>Pipe total</b> is that route multiplied by the number of pipes each section carries: two for
   liquid and suction gas, three where the high-pressure gas line runs as well.
   Line sizes are the manufacturer’s, selected against the model and these lengths; this take-off
-  measures the route and does not size the pipe.</p>
+  measures the route and does not size the pipe.
+  ${t.sections ? '<b>' + t.sized + ' of ' + plural(t.sections, 'section') + '</b> has every line sized'
+    + (t.sized < t.sections ? ' — the rest are still to come from the selection.' : '.') : ''}</p>
 ${a.issues.length
   ? '<div class="warn"><b>' + plural(a.issues.length, 'thing') + ' to settle before these lengths are used</b><ul>'
     + a.issues.map(m => '<li>' + esc(m) + '</li>').join('') + '</ul></div>'
@@ -4332,7 +4684,8 @@ async function exportXlsx() {
   /* ---- Pipe sections ---- */
   const pipe = [[HD('Section'), HD('System'), HD('From'), HD('To'), HD('Pipes'), HD('Plan m'),
     HD('Rise m'), HD('One way m'), HD('Pipe m'), HD('Height low m'), HD('Height high m'),
-    HD('Liquid'), HD('Gas'), HD('HP gas'), HD('Indoor units'), HD('kW'), HD('Note')]];
+    HD('Liquid'), HD('Liquid OD mm'), HD('Gas'), HD('Gas OD mm'), HD('HP gas'), HD('HP gas OD mm'),
+    HD('Insulation'), HD('Insulation m'), HD('Indoor units'), HD('kW'), HD('Note')]];
   const allSegs = (S.systems || []).reduce((acc, st) => acc.concat(st.segs), [])
     .concat(S.segs.filter(s => s.orphan));
   allSegs.forEach(sg => {
@@ -4340,14 +4693,64 @@ async function exportXlsx() {
     const dn = nodeById(sg.down != null ? sg.down : sg.b);
     const cond = nodeById(sg.sysId);
     const hs = heightsOf(sg);
+    const ins = insulationOf(sg);
     pipe.push([segName(sg), cond ? cond.name : 'not on a system',
       up ? (up.name || nodeWord(up)) : '', dn ? (dn.name || nodeWord(dn)) : '',
       sg.pipes, N2(sg.routeM), N2(sg.riseM), NB(sg.lengthM), N2(sg.pipeM),
       N2(Math.min.apply(null, hs)), N2(Math.max.apply(null, hs)),
-      sg.sizeLiquid || '', sg.sizeGas || '', sg.sizeHp || '',
+      sizeLabel(sg.sizeLiquid), sg.sizeLiquid ? N2(sizeOd(sg.sizeLiquid)) : '',
+      sizeLabel(sg.sizeGas), sg.sizeGas ? N2(sizeOd(sg.sizeGas)) : '',
+      sg.pipes === 3 ? sizeLabel(sg.sizeHp) : '',
+      sg.pipes === 3 && sg.sizeHp ? N2(sizeOd(sg.sizeHp)) : '',
+      INSULATION[ins].label, ins === 'none' ? 0 : N2(sg.pipeM),
       sg.nIndoor || 0, N2(sg.kw || 0), sg.note || '']);
   });
   pipe.push([B('Total'), '', '', '', '', NB(t.routeM), NB(t.riseM), NB(t.lengthM), NB(t.pipeM)]);
+
+  /* ---- Materials: what has to be ordered ----
+     Every line of every section added up by size, which is the figure a
+     take-off is actually wanted for. Sections with no size against them yet
+     are counted separately rather than quietly left out, so the total always
+     reconciles with the Pipe sections sheet. */
+  const bySize = {}; let unsized = 0;
+  S.segs.forEach(sg => {
+    linesFor(sg.pipes).forEach(kk => {
+      const key = sg[SIZE_FIELD[kk]];
+      if (!key) { unsized += sg.lengthM; return; }
+      const row = bySize[kk + '|' + key] || (bySize[kk + '|' + key] = { line: kk, size: key, m: 0, n: 0 });
+      row.m += sg.lengthM; row.n++;
+    });
+  });
+  const mat = [[HD('Line'), HD('Size'), HD('OD mm'), HD('Length m'), HD('Sections')]];
+  Object.keys(bySize)
+    .sort((a, b) => bySize[a].line.localeCompare(bySize[b].line)
+      || PIPE_SIZES.findIndex(z => z.key === bySize[a].size) - PIPE_SIZES.findIndex(z => z.key === bySize[b].size))
+    .forEach(k2 => {
+      const r = bySize[k2];
+      mat.push([LINES[r.line].label, sizeLabel(r.size), N2(sizeOd(r.size)), NB(r.m), r.n]);
+    });
+  mat.push([B('Total pipe'), '', '', NB(t.pipeM - unsized), '']);
+  if (unsized > 0.005) {
+    mat.push([]);
+    mat.push([B('Not yet sized'), '', '', NB(unsized), '']);
+    mat.push(['Lines with no size picked against them. Put the manufacturer’s selection in on the '
+      + 'Line sizes tab and this sheet completes itself.']);
+  }
+  mat.push([]);
+  mat.push([HD('Insulation'), HD('Wall'), HD(''), HD('Length m'), HD('Sections')]);
+  const byIns = {};
+  S.segs.forEach(sg => {
+    const k2 = insulationOf(sg);
+    if (k2 === 'none') return;
+    const row = byIns[k2] || (byIns[k2] = { m: 0, n: 0 });
+    row.m += sg.pipeM; row.n++;
+  });
+  INSULATION_ORDER.forEach(k2 => {
+    if (!byIns[k2]) return;
+    mat.push([INSULATION[k2].label, fmt(INSULATION[k2].wall, 1) + ' mm', '', NB(byIns[k2].m), byIns[k2].n]);
+  });
+  const noIns = S.segs.filter(sg => insulationOf(sg) === 'none');
+  if (noIns.length) mat.push(['Not insulated', '', '', NB(noIns.reduce((x, g) => x + g.pipeM, 0)), noIns.length]);
 
   /* ---- Units ---- */
   const units = [[HD('Name'), HD('What'), HD('Type'), HD('Model'), HD('Cooling kW'),
@@ -4408,7 +4811,9 @@ async function exportXlsx() {
   /* ---- the two pictures, the same ones the PDF report carries ---- */
   const sheets = [
     { name: 'Summary', rows: sum, widths: [30, 22, 60] },
-    { name: 'Pipe sections', rows: pipe, widths: [12, 16, 16, 16, 7, 9, 9, 11, 10, 12, 12, 11, 11, 11, 12, 8, 34] },
+    { name: 'Pipe sections', rows: pipe,
+      widths: [12, 16, 16, 16, 7, 9, 9, 11, 10, 12, 12, 10, 12, 11, 12, 10, 12, 12, 13, 12, 8, 34] },
+    { name: 'Materials', rows: mat, widths: [22, 12, 10, 12, 10] },
     { name: 'Units', rows: units, widths: [12, 15, 26, 20, 11, 11, 12, 10, 10, 10, 15, 14, 16, 12, 30, 20, 8] },
     { name: 'Systems', rows: sys, widths: [13, 26, 18, 13, 12, 11, 15, 15, 14, 12, 12, 13, 15, 15, 17, 15, 12, 15, 12, 10, 50] },
     { name: 'Check', rows: chk, widths: [22, 100] },
@@ -4569,9 +4974,12 @@ async function loadDrawingFile(file) {
       const buf = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
       const page = await pdf.getPage(1);
-      // rendered generously, so tracing stays accurate when zoomed right in
+      /* Rendered generously: the take-off is only ever as accurate as the
+         raster it is traced on, and connections are now placed on the side of
+         a unit rather than at its centre, which is a job for a zoomed-in
+         view. Capped so a big sheet does not blow the canvas limit. */
       const base = page.getViewport({ scale: 1 });
-      const scale = clamp(2600 / base.width, 1, 4);
+      const scale = clamp(3400 / base.width, 1, 6);
       const vp = page.getViewport({ scale });
       const cv = document.createElement('canvas');
       cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
@@ -4864,6 +5272,12 @@ function projectDialog() {
     + 'run, carries its own height and can be changed from the inspector.</div>'
     + '<label class="fld"><span>Default indoor duty <em>kW, on a new unit</em></span>'
     + '<input type="number" id="pKw" step="0.1" value="' + s.defaultKw + '"></label>'
+    + '<label class="fld"><span>Insulation <em>wall thickness a section gets unless it says otherwise</em></span>'
+    + '<select id="pIns">'
+    + INSULATION_ORDER.map(k2 => '<option value="' + k2 + '"'
+        + ((s.insulation || '1/2') === k2 ? ' selected' : '') + '>'
+        + esc(INSULATION[k2].label) + '</option>').join('')
+    + '</select></label>'
 
     + '<h4>While tracing</h4>'
     + chk('pOrtho', s.ortho, 'Square corners',
@@ -4895,6 +5309,7 @@ function projectDialog() {
     s.indoorHeight = parseFloat(el('pHi').value) || 0;
     s.bcHeight = parseFloat(el('pHb').value) || 0;
     s.defaultKw = parseFloat(el('pKw').value) || 0;
+    s.insulation = el('pIns').value;
     s.ortho = el('pOrtho').checked;
     s.snapPoints = el('pSnap').checked;
     s.autoName = el('pAuto').checked;
@@ -4951,7 +5366,15 @@ function stepsDialog() {
         + 'no traced length changes, and the 3D view and both reports follow.')
     + step(done.traced, 'Trace the pipe', 'Start on a unit, a joint or a corner and click along the '
         + 'route. <b>Change the height in the bar before a click and that point becomes a riser</b> — '
-        + 'that is how the vertical pipe gets into the length. Finish on whatever the run reaches.')
+        + 'that is how the vertical pipe gets into the length. Finish on whatever the run reaches: '
+        + '<b>click anywhere on a unit and the pipe connects at that point</b>, which is what you want '
+        + 'when the stubs come out of one end of the casing. Zoom right in to place it accurately — '
+        + 'click near the middle and it snaps to the centre as before.')
+    + step(false, 'Put the line sizes in', 'Schedule → <b>Line sizes</b>. Tick the sections a selection '
+        + 'covers — or a whole system at once — pick the liquid, gas and HP gas sizes and apply them to '
+        + 'the lot. Sizes are the imperial steps refrigerant pipe is actually bought in, 1/4" to 1 5/8". '
+        + 'Insulation is 1/2" wall by default, 3/8" where there is no room for it. All of it goes to '
+        + 'the Excel report, including a Materials sheet totalling every line by size for ordering.')
     + step(false, 'Check, then report', 'Check reads every system against its own type. The PDF report '
         + 'carries the schedule, the layout plan and the 3D plan; the Excel report carries the same '
         + 'figures as columns you can work with.')
@@ -5045,9 +5468,10 @@ sc.addEventListener('pointerdown', ev => {
   if (tool === 'trace') {
     if (!draft) {
       const sn = snapAt(p);
-      const node = connectAt(sn);
-      if (!node) { toast('Start on a unit, a joint or a corner'); return; }
-      draft = { kind: 'trace', startNode: node.id, pts: [{ x: node.x, y: node.y, h: traceHeight }] };
+      const c = connectAt(sn);
+      if (!c) { toast('Start on a unit, a joint or a corner'); return; }
+      draft = { kind: 'trace', startNode: c.node.id, startOff: c.off,
+                pts: [{ x: c.at.x, y: c.at.y, h: traceHeight }] };
       render();
       return;
     }
@@ -5056,11 +5480,11 @@ sc.addEventListener('pointerdown', ev => {
       if (sn.kind === 'node' && sn.node.id === draft.startNode) {
         toast('That is where this run started'); return;
       }
-      const node = connectAt(sn);
-      if (node) {
-        if (node.id === draft.startNode) { toast('That is where this run started'); return; }
-        draft.pts.push({ x: node.x, y: node.y, h: traceHeight });
-        finishTrace(node.id);
+      const c = connectAt(sn);
+      if (c) {
+        if (c.node.id === draft.startNode) { toast('That is where this run started'); return; }
+        draft.pts.push({ x: c.at.x, y: c.at.y, h: traceHeight });
+        finishTrace(c.node.id, c.off);
         return;
       }
     }
@@ -5117,11 +5541,8 @@ sc.addEventListener('pointermove', ev => {
       if (!drag.moved) pushUndo('move ' + (n.name || nodeWord(n)));
       n.x = p.x - drag.dx; n.y = p.y - drag.dy;
       drag.moved = true;
-      // the ends of every section stay stuck to the unit they are joined to
-      S.segs.forEach(s => {
-        if (s.a === n.id) { s.pts[0].x = n.x; s.pts[0].y = n.y; }
-        if (s.b === n.id) { s.pts[s.pts.length - 1].x = n.x; s.pts[s.pts.length - 1].y = n.y; }
-      });
+      // the ends of every section follow, each to its own connection point
+      syncSegEnds();
       render();
     }
     return;

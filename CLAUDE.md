@@ -178,12 +178,25 @@ Repeated fine angles re-encode the bitmap and soften it; the dialog says so.
   back to the type. Changing the unit type does **not** move a size that has
   been set by hand; `sized` is what tells them apart, and the inspector says
   which it is and offers *Back to type size*.
-- **Resizing and turning are drawing truth only, and must stay that way.**
-  Both work about the centre, and the centre is where the pipe lands — so no
-  traced length can change. If a future edit ever moves a unit's connection
-  point off its centre, `riseBreakdown()` and every length in the schedule
-  become sensitive to a cosmetic drag, which is exactly the bug this rule
-  exists to prevent.
+- **A section remembers where on its end unit it connects.** A refrigerant
+  connection is a stub on the side or the end of the casing, and on a large
+  unit the difference from the centre is real metres. `sg.aOff` / `sg.bOff`
+  hold `{u, v}`, a fraction of that unit's half-extents in the unit's own
+  frame — `null` means the centre, which is what every older file has and what
+  the centre magnet still gives you. Kept as a fraction so it stays on the
+  same corner of the casing when the unit is resized, and turns with it.
+  `connPoint()` resolves it and `syncSegEnds()` — first thing in `solve()` —
+  puts every section's ends back where its units say they are, so moving,
+  resizing or turning a unit carries its pipework with it and nothing else has
+  to remember to.
+- **The connection is measured against the TRUE footprint**, `unitBoxTrue()`,
+  never the legibility minimum `unitBox()` applies when zoomed out. Measure it
+  against the drawn box and a connection slides as you zoom, and every length
+  in the schedule moves with it.
+- **Resizing and turning a unit now moves its connections, so they can change
+  a length.** That is correct — the pipe lands where the stub is — but it is a
+  real change from the original rule that the two were drawing truth only.
+  A unit whose pipes connect at the centre is still unaffected by either.
 - **The box turns; the writing does not.** The rect, its edge band and its
   glyph go inside one rotated `<g>`; the name, the duty and the height are
   drawn outside it, placed off `unitHalf()` — the axis-aligned extent of the
@@ -318,23 +331,31 @@ Five minutes, and it exercises everything:
    sections from the condenser show **3** in the pipe badge and the sections
    after each box show **2**.
 4. **Select an indoor unit and drag a corner handle**, then the arm above it.
-   Confirm the footprint readout under the box follows, that the name and the
-   duty stay square to the sheet while the box turns, and that *Route one way*
-   in the status strip **does not move by a single decimal**. Change the unit
-   type afterwards and confirm the hand-set size survives it.
-5. Trace a run that **changes height mid-way** — press `]` between two clicks.
+   Confirm the footprint readout under the box follows, and that the name and
+   the duty stay square to the sheet while the box turns. Change the unit type
+   afterwards and confirm the hand-set size survives it.
+5. **Zoom right in and trace on to the corner of a unit**, not its middle.
+   Confirm a ring is drawn where the pipe lands, that the length is measured
+   to that corner rather than the centre, and that moving and turning the unit
+   afterwards carries the connection round with it.
+6. Trace a run that **changes height mid-way** — press `]` between two clicks.
    Confirm a riser marker with the height change appears on the plan, that the
    run inspector lists a height per point, and that *Rise* on the schedule is
    not zero.
-6. **Check.** It should come back clean. Now change the condenser to *Multi
+7. **Check.** It should come back clean. Now change the condenser to *Multi
    split* and run Check again: it must name the sections carrying more than
    one unit.
-7. **3D view.** Confirm every unit sits at the height it was given, that the
+8. **3D view.** Confirm every unit sits at the height it was given, that the
    height staff reads off, that a 3-pipe run shows three lines, and that the
    unit you resized and turned stands the same way there as on the plan.
-8. **Save**, reload the page, **Open** the file. Every section name, length
-   point height, footprint and angle must come back identical.
-9. **PDF report** — the layout plan and both 3D pictures must be there, in
+9. **Line sizes.** Open the schedule, tick every section, set a liquid, a gas
+   and an HP gas size and apply them. Confirm the HP gas is skipped on the
+   2-pipe sections and named in the toast, and that the inspector shows the
+   same sizes as the drawer for whichever section is selected.
+10. **Save**, reload the page, **Open** the file. Every section name, length,
+   point height, footprint, angle, connection point and line size must come
+   back identical.
+11. **PDF report** — the layout plan and both 3D pictures must be there, in
    colour, with the section labels legible. **Excel** — open it and confirm
    seven sheets, that *Pipe sections* totals match the schedule drawer, and
    that the two picture sheets carry their pictures.
@@ -372,6 +393,8 @@ Replace when better figures arrive; none of them changes a length.
 | Connected-ratio flag | over 130% is called out. Real limits are per range and per refrigerant |
 | Twin/triple leg tolerance | 20% between the legs past the tee |
 | Pipe separation on the plan and in 3D | drawn wider than true so three pipes read as three pipes. True separation is one line on screen |
+| Insulation | 1/2" wall by default, 3/8" the thinner option, per section. Insulated length is the pipe metres, because every line is insulated over its whole length |
+| Line size list | 1/4 to 1 5/8 inch in the nine steps refrigerant pipe is actually bought in. Sizes are picked from that list, never typed, because a typed figure is one nobody can order |
 
 The one figure this tool will never carry is a refrigerant line size worked
 out by itself. Sizes are typed in from the manufacturer's selection, per
