@@ -674,6 +674,7 @@
           <div class="segbtn" id="schedTabs">
             <button data-tab="pipe" class="on">Pipe sections</button>
             <button data-tab="size">Line sizes</button>
+            <button data-tab="duct">Ductwork</button>
             <button data-tab="unit">Units</button>
             <button data-tab="sys">Systems</button>
           </div>
@@ -849,6 +850,8 @@ const PLANT_TYPES = {
   condenser: { label: 'Condenser', abbr: 'CU', w: 1.10, d: 0.42, h: 0.30, t: 1.30, sym: 'cond' },
   bcMain:    { label: 'BC controller', abbr: 'BC', w: 0.90, d: 0.40, h: 2.90, t: 0.30, sym: 'bc' },
   bcSingle:  { label: 'Single BC box', abbr: 'BCS', w: 0.42, d: 0.32, h: 2.90, t: 0.22, sym: 'bcs' },
+  outlet:    { label: 'Outlet', abbr: 'OUT', w: 0.30, d: 0.30, h: 2.70, t: 0.10, sym: 'outlet' },
+  controller:{ label: 'Controller', abbr: 'CTL', w: 0.12, d: 0.09, h: 1.40, t: 0.02, sym: 'ctl' },
 };
 
 /* ==========================================================================
@@ -912,6 +915,72 @@ function insulationOf(sg) {
 }
 
 /* ==========================================================================
+   DUCTWORK
+   A ducted unit moves air as well as refrigerant, and the ductwork off it is
+   a second, simpler network: a tree from the unit out to the outlets, with
+   the unit's own air volume shared among them. It is deliberately kept apart
+   from the pipework — its own runs, its own naming, its own schedule — because
+   the two are different trades reading different figures off the same sheet.
+
+   These two colours belong to ductwork and nothing else, the same way the
+   three refrigerant lines own theirs.
+   ========================================================================== */
+const DUCT_KINDS = {
+  supply:  { label: 'Supply', short: 'SA', colour: '#2f8f7a' },
+  extract: { label: 'Extract', short: 'EA', colour: '#8c5bb8' },
+};
+const DUCT_KIND_ORDER = ['supply', 'extract'];
+
+/* Round or rectangular, in millimetres, because that is how ductwork is
+   drawn and ordered. The area is what turns a volume into a velocity. */
+const DUCT_SHAPES = { circ: 'Circular', rect: 'Rectangular' };
+function ductArea(d) {
+  if (!d) return 0;
+  if (d.shape === 'rect') {
+    const w = parseFloat(d.w) || 0, h = parseFloat(d.h) || 0;
+    return (w / 1000) * (h / 1000);
+  }
+  const dia = parseFloat(d.dia) || 0;
+  return Math.PI * Math.pow(dia / 2000, 2);
+}
+function ductSizeLabel(d) {
+  if (!d) return '';
+  if (d.shape === 'rect') {
+    const w = parseFloat(d.w) || 0, h = parseFloat(d.h) || 0;
+    return (w && h) ? (fmt(w, 0) + ' × ' + fmt(h, 0)) : '';
+  }
+  const dia = parseFloat(d.dia) || 0;
+  return dia ? ('Ø' + fmt(dia, 0)) : '';
+}
+/* The round duct sizes ductwork is actually made in, for the size helper. */
+const DUCT_DIAMETERS = [100, 125, 150, 160, 180, 200, 224, 250, 280, 315, 355, 400, 450, 500, 560, 630, 710, 800];
+
+/* The three fan speeds a ducted unit is selected at: air volume in litres a
+   second and the external resistance in pascals it will drive against.
+   Straight off the manufacturer's data — nothing here works them out. */
+const FAN_SPEEDS = [
+  { key: 'low',  label: 'Low' },
+  { key: 'med',  label: 'Medium' },
+  { key: 'high', label: 'High' },
+];
+function fanAt(n, key) {
+  const f = (n && n.fan) || {};
+  const s = f[key] || {};
+  return { v: parseFloat(s.v) || 0, p: parseFloat(s.p) || 0 };
+}
+/* The speed the ductwork off this unit is set out at. */
+function designSpeed(n) { return (n && n.fanSpeed) || 'high'; }
+function designFlow(n) { return fanAt(n, designSpeed(n)).v; }
+
+/* Controllers. Placed, named, and ticked against the units they drive. */
+const CONTROLLER_KINDS = {
+  local:   { label: 'Local controller', abbr: 'LC' },
+  central: { label: 'Central controller', abbr: 'CC' },
+  remote:  { label: 'Remote / BMS interface', abbr: 'RC' },
+};
+const CONTROLLER_ORDER = ['local', 'central', 'remote'];
+
+/* ==========================================================================
    PROJECT STATE
    ========================================================================== */
 const S = {
@@ -921,7 +990,7 @@ const S = {
   pxPerM: 0,                 // set by calibration
   calib: null,               // { a:{x,y}, b:{x,y}, metres }
   rotation: 0,               // degrees already applied to the sheet, for the record
-  nodes: [], segs: [],
+  nodes: [], segs: [], ducts: [],
   nextId: 1,
   settings: {
     autoName: true,
@@ -938,6 +1007,9 @@ const S = {
     defaultIndoor: 'cass600',
     defaultKw: 3.5,
     insulation: '1/2',           // the wall a section gets unless it says otherwise
+    ductHeight: 3.40,            // ductwork sits above the refrigerant pipe by default
+    ductVel: 4.0,                // the velocity the size helper aims at, m/s
+    defaultDuctShape: 'circ',
   },
   setupDone: false,
 };
@@ -975,7 +1047,7 @@ const undoStack = [];
 let undoSuspended = false;
 
 function undoSnapshot() {
-  return JSON.stringify({ nodes: S.nodes, segs: S.segs, nextId: S.nextId });
+  return JSON.stringify({ nodes: S.nodes, segs: S.segs, ducts: S.ducts, nextId: S.nextId });
 }
 /* Call before the change, with a few words for the button's tooltip. */
 function pushUndo(label) {
@@ -994,7 +1066,7 @@ function undo() {
   const step = undoStack.pop();
   if (!step) { toast('Nothing to undo'); return; }
   const d = JSON.parse(step.state);
-  S.nodes = d.nodes; S.segs = d.segs; S.nextId = d.nextId;
+  S.nodes = d.nodes; S.segs = d.segs; S.ducts = d.ducts || []; S.nextId = d.nextId;
   draft = null; sel = null;
   closeInspector();
   refreshUndoBtn();
@@ -1055,6 +1127,8 @@ function nearestOnPoly(pts, p) {
 
 function nodeById(id) { return S.nodes.find(n => n.id === id) || null; }
 function segById(id)  { return S.segs.find(s => s.id === id) || null; }
+function ductById(id) { return S.ducts.find(d => d.id === id) || null; }
+function runById(id)  { return segById(id) || ductById(id); }
 function segName(sg)  { return sg ? (sg.name || sg.ref || 'section') : ''; }
 
 /* ---------- heights ----------
@@ -1272,6 +1346,7 @@ function solve() {
             : (dn && dn.type === 'indoor') ? 'branch' : 'branch';
   });
   S.systems = systemsStats();
+  solveDucts();
 }
 
 /* The sections between a condenser and one indoor unit, in order. */
@@ -1358,6 +1433,149 @@ function systemsStats() {
   });
 }
 
+/* ==========================================================================
+   THE AIR
+   A duct network is a tree rooted at a ducted unit. The unit's air volume at
+   its design fan speed is what there is to share out, and by default it is
+   shared evenly between everything taking air off — which is the right first
+   answer and almost never the final one, so anything can be pinned to a
+   figure and the rest re-share what is left.
+
+   Three ways to take air off, because a real drawing has all three:
+     · an outlet placed where the diffuser actually is, with its own l/s;
+     · a section carrying a count of outlets and a total off that section;
+     · a section marked as a sock, distributing evenly over its whole length.
+   ========================================================================== */
+function ductNeighbours(nodeId) {
+  return S.ducts.filter(d => d.a === nodeId || d.b === nodeId);
+}
+function ductLenM(d) { return S.pxPerM > 0 ? polyLenPx(d.pts) / S.pxPerM : 0; }
+
+/* A section's own take-off: what leaves the ductwork along it rather than
+   carrying on down it. `outletLps` of 0 means "share of whatever is left". */
+function autoUnits(d) {
+  const fixed = parseFloat(d.outletLps) || 0;
+  if (fixed > 0) return 0;
+  if (d.sock) return Math.max(1, parseFloat(d.outlets) || 1);
+  return Math.max(0, parseInt(d.outlets, 10) || 0);
+}
+
+function solveDucts() {
+  const roots = S.nodes.filter(n => n.type === 'indoor' && n.unit === 'ducted');
+  S.nodes.forEach(n => { if (n.type === 'outlet' || n.type === 'djoint') { n.reached = false; n.unitId = null; } });
+  S.ducts.forEach(d => {
+    d.up = null; d.down = null; d.orphan = true; d.unitId = null;
+    d.routeM = 0; d.riseM = 0; d.lengthM = 0;
+    d.flow = 0; d.takeOff = 0; d.vel = 0; d.perOutlet = 0; d.perMetre = 0;
+  });
+
+  roots.forEach(root => {
+    root.unitId = root.id;
+    const stack = [root.id], seen = { [root.id]: true };
+    while (stack.length) {
+      const cur = stack.pop();
+      ductNeighbours(cur).forEach(d => {
+        if (d.up !== null) return;
+        const other = d.a === cur ? d.b : d.a;
+        if (seen[other]) return;
+        d.up = cur; d.down = other; d.orphan = false; d.unitId = root.id;
+        const dn = nodeById(other);
+        if (dn) { dn.reached = true; dn.unitId = root.id; seen[other] = true; stack.push(other); }
+      });
+    }
+  });
+  S.ducts.forEach(d => { if (d.up === null) { d.up = d.a; d.down = d.b; } });
+
+  // lengths, the same way pipework measures them
+  S.ducts.forEach(d => {
+    d.routeM = ductLenM(d);
+    const r = riseBreakdown(d);
+    d.riseM = r.total; d.rise = r;
+    d.lengthM = d.routeM + d.riseM;
+    d.area = ductArea(d);
+  });
+
+  /* Share the unit's volume out: anything pinned to a figure is taken first,
+     and what is left is divided evenly between everything set to share. */
+  roots.forEach(root => {
+    const mine = S.ducts.filter(d => d.unitId === root.id);
+    const outletNodes = S.nodes.filter(n => n.type === 'outlet' && n.unitId === root.id);
+    const total = designFlow(root);
+
+    let fixed = 0, shares = 0;
+    outletNodes.forEach(o => {
+      const v = parseFloat(o.lps) || 0;
+      if (v > 0) fixed += v; else shares += 1;
+    });
+    mine.forEach(d => {
+      const v = parseFloat(d.outletLps) || 0;
+      if (v > 0) fixed += v; else shares += autoUnits(d);
+    });
+    const spare = Math.max(0, total - fixed);
+    const per = shares > 0 ? spare / shares : 0;
+
+    outletNodes.forEach(o => {
+      const v = parseFloat(o.lps) || 0;
+      o.flow = v > 0 ? v : per;
+      o.auto = !(v > 0);
+    });
+    mine.forEach(d => {
+      const v = parseFloat(d.outletLps) || 0;
+      const nAuto = autoUnits(d);
+      d.nOutlets = d.sock ? Math.max(1, parseInt(d.outlets, 10) || 1) : (parseInt(d.outlets, 10) || 0);
+      d.takeOff = v > 0 ? v : per * nAuto;
+      d.perOutlet = d.nOutlets > 0 ? d.takeOff / d.nOutlets : 0;
+      d.perMetre = d.sock && d.lengthM > 0.01 ? d.takeOff / d.lengthM : 0;
+    });
+
+    /* What each section carries is everything it delivers downstream plus
+       whatever comes off along it — the figure at the section's inlet, which
+       is the one a duct is sized on. */
+    const carried = nodeId => {
+      let q = 0;
+      const o = nodeById(nodeId);
+      if (o && o.type === 'outlet') q += o.flow || 0;
+      mine.filter(d => d.up === nodeId).forEach(d => {
+        d.flow = d.takeOff + carried(d.down);
+        q += d.flow;
+      });
+      return q;
+    };
+    carried(root.id);
+    mine.forEach(d => {
+      d.vel = d.area > 0 ? (d.flow / 1000) / d.area : 0;
+    });
+  });
+
+  S.ductSystems = roots.map(root => {
+    const mine = S.ducts.filter(d => d.unitId === root.id);
+    const outs = S.nodes.filter(n => n.type === 'outlet' && n.unitId === root.id);
+    const sectionOutlets = mine.reduce((t, d) => t + (d.nOutlets || 0), 0);
+    return {
+      unit: root, ducts: mine, outlets: outs,
+      total: designFlow(root), speed: designSpeed(root),
+      pa: fanAt(root, designSpeed(root)).p,
+      lengthM: mine.reduce((t, d) => t + d.lengthM, 0),
+      delivered: outs.reduce((t, o) => t + (o.flow || 0), 0)
+                 + mine.reduce((t, d) => t + (d.takeOff || 0), 0),
+      nOutlets: outs.length + sectionOutlets,
+      maxVel: mine.reduce((m, d) => Math.max(m, d.vel || 0), 0),
+    };
+  });
+}
+
+/* A round size that would carry this volume at about the target velocity —
+   the other way round from entering a size and reading the velocity off. It
+   suggests, it does not apply: sizing ductwork is a different job and a
+   different tool. */
+function suggestDia(lps, targetVel) {
+  const q = (parseFloat(lps) || 0) / 1000;
+  const v = parseFloat(targetVel) || 4;
+  if (!(q > 0) || !(v > 0)) return 0;
+  const dia = Math.sqrt((4 * q) / (Math.PI * v)) * 1000;
+  return DUCT_DIAMETERS.find(x => x >= dia) || DUCT_DIAMETERS[DUCT_DIAMETERS.length - 1];
+}
+
 function totals() {
   const segs = S.segs;
   return {
@@ -1372,6 +1590,12 @@ function totals() {
     branches: S.nodes.filter(n => n.type === 'branch').length,
     kwIndoor: S.nodes.filter(n => n.type === 'indoor').reduce((t, n) => t + indoorKw(n), 0),
     insulatedM: segs.reduce((t, s) => t + (insulationOf(s) === 'none' ? 0 : s.pipeM), 0),
+    ducts: S.ducts.length,
+    ductM: S.ducts.reduce((t, d) => t + (d.lengthM || 0), 0),
+    outlets: S.nodes.filter(n => n.type === 'outlet').length
+             + S.ducts.reduce((t, d) => t + (d.nOutlets || 0), 0),
+    controllers: S.nodes.filter(n => n.type === 'controller').length,
+    airLps: (S.ductSystems || []).reduce((t, x) => t + x.total, 0),
     sized: segs.filter(s => linesFor(s.pipes).every(kk => s[SIZE_FIELD[kk]])).length,
     unreached: S.nodes.filter(n => (n.type === 'indoor' || n.type === 'bc') && !n.reached).length,
     orphanSegs: segs.filter(s => s.orphan).length,
@@ -1439,7 +1663,18 @@ function unitDef(n) {
   if (n.type === 'condenser') return PLANT_TYPES.condenser;
   if (n.type === 'bc') return n.kind === 'single' ? PLANT_TYPES.bcSingle : PLANT_TYPES.bcMain;
   if (n.type === 'indoor') return INDOOR_TYPES[n.unit] || INDOOR_TYPES.cass600;
+  if (n.type === 'outlet') return PLANT_TYPES.outlet;
+  if (n.type === 'controller') return PLANT_TYPES.controller;
   return null;
+}
+/* Which network a node belongs to. Pipework must not snap to a diffuser and
+   ductwork must not snap to a BC box; a controller is on neither. */
+const PIPE_NODES = ['condenser', 'indoor', 'bc', 'branch'];
+const DUCT_NODES = ['indoor', 'outlet', 'djoint'];
+function inNet(n, net) {
+  if (net === 'duct') return DUCT_NODES.indexOf(n.type) >= 0
+    && (n.type !== 'indoor' || n.unit === 'ducted');
+  return PIPE_NODES.indexOf(n.type) >= 0;
 }
 const MIN_FOOT_M = 0.08;
 /* The footprint in real metres: set by hand if it has been, otherwise the
@@ -1485,7 +1720,7 @@ function unitBoxTrue(n) {
 }
 function connPoint(n, off) {
   if (!n) return null;
-  if (!off || n.type === 'branch') return { x: n.x, y: n.y };
+  if (!off || n.type === 'branch' || n.type === 'djoint') return { x: n.x, y: n.y };
   const b = unitBoxTrue(n);
   return fromLocal(n, { x: clamp(off.u, -1, 1) * b.w / 2,
                         y: clamp(off.v, -1, 1) * b.d / 2 }, b.rot);
@@ -1494,7 +1729,7 @@ function connPoint(n, off) {
    at the top of solve(), so moving, resizing or turning a unit carries its
    pipework with it without anything else having to remember to. */
 function syncSegEnds() {
-  S.segs.forEach(sg => {
+  S.segs.concat(S.ducts || []).forEach(sg => {
     if (!sg.pts || sg.pts.length < 2) return;
     const a = connPoint(nodeById(sg.a), sg.aOff);
     const b = connPoint(nodeById(sg.b), sg.bOff);
@@ -1529,7 +1764,7 @@ function hitNode(p, tolPx) {
   const k = 1 / zoom;
   let best = null;
   S.nodes.forEach(n => {
-    if (n.type === 'branch') {
+    if (n.type === 'branch' || n.type === 'djoint') {
       const d = dist(n, p);
       if (d < (tolPx || 14) * k && (!best || d < best.d)) best = { d, node: n };
       return;
@@ -1566,7 +1801,7 @@ function handlesOf(n, k) {
 function hitHandle(p) {
   if (tool !== 'select' || !sel || sel.kind !== 'node') return null;
   const n = nodeById(sel.id);
-  if (!n || n.type === 'branch') return null;
+  if (!n || n.type === 'branch' || n.type === 'djoint') return null;
   const k = 1 / zoom;
   const tol = (HANDLE_PX + 4) * k;
   let best = null;
@@ -1576,10 +1811,10 @@ function hitHandle(p) {
   });
   return best;
 }
-function hitSeg(p, tolPx) {
+function hitSeg(p, tolPx, net) {
   const tol = (tolPx || 10) / zoom;
   let best = null;
-  S.segs.forEach(s => {
+  runsOf(net || 'pipe').forEach(s => {
     const r = nearestOnPoly(s.pts, p);
     if (r && r.d < tol && (!best || r.d < best.r.d)) best = { seg: s, r };
   });
@@ -1648,6 +1883,11 @@ function render() {
       fill: '#fff' }, lbl));
   }
 
+  /* ---- ductwork ----
+     Drawn first, so the refrigerant lines read over the top of it: the pipe
+     is the take-off, the duct is the other trade on the same sheet. */
+  S.ducts.forEach(d => drawDuct(g, d, k));
+
   // ---- pipe sections ----
   S.segs.forEach(sg => drawSeg(g, sg, k));
 
@@ -1655,7 +1895,7 @@ function render() {
   if (tool === 'joint' && hoverPt) drawJointSnap(g, k);
 
   // ---- live trace ----
-  if (draft && draft.kind === 'trace' && draft.pts.length) {
+  if (draft && (draft.kind === 'trace' || draft.kind === 'duct') && draft.pts.length) {
     const pts = hoverPt ? draft.pts.concat([previewPoint(hoverPt)]) : draft.pts;
     g.appendChild(mk('path', { d: pathOf(pts), fill: 'none', stroke: 'var(--measure)',
       'stroke-width': 2.4 * k, 'stroke-dasharray': (8 * k) + ' ' + (5 * k), 'stroke-linecap': 'round' }));
@@ -1701,7 +1941,7 @@ function render() {
   }
 
   // ---- what a click would connect to ----
-  if (tool === 'trace' && hoverPt) drawSnap(g, k);
+  if ((tool === 'trace' || tool === 'duct') && hoverPt) drawSnap(g, k, tool === 'duct' ? 'duct' : 'pipe');
   // ---- where a unit would land ----
   if (PLACE_TOOLS.indexOf(tool) >= 0 && hoverPt) drawPlaceGhost(g, k);
 
@@ -1716,7 +1956,7 @@ function render() {
     [[sg.aOff, sg.pts[0], sg.a], [sg.bOff, sg.pts[sg.pts.length - 1], sg.b]].forEach(([off, p, id]) => {
       if (!off || !p) return;
       const n = nodeById(id);
-      if (!n || n.type === 'branch') return;
+      if (!n || n.type === 'branch' || n.type === 'djoint') return;
       g.appendChild(mk('circle', { cx: p.x, cy: p.y, r: 3.4 * k,
         fill: 'var(--white)', stroke: 'var(--graphite)', 'stroke-width': 1.6 * k }));
       g.appendChild(mk('circle', { cx: p.x, cy: p.y, r: 1.1 * k, fill: 'var(--graphite)' }));
@@ -1813,6 +2053,68 @@ function drawSeg(g, sg, k) {
   }
 }
 
+/* ---------- one duct section ----------
+   Drawn as a band rather than a line, because a duct is a big thing on a
+   ceiling plan and reads wrongly as a pipe. A sock is drawn dashed along its
+   length, which is what it looks like and what it does. */
+function drawDuct(g, d, k) {
+  const picked = sel && sel.kind === 'duct' && sel.id === d.id;
+  const pts = d.pts;
+  if (!pts || pts.length < 2) return;
+  const col = (DUCT_KINDS[d.kind] || DUCT_KINDS.supply).colour;
+  const path = pathOf(pts);
+  // a band whose width follows the duct size once one has been given
+  const wPx = d.area > 0 && S.pxPerM > 0
+    ? clamp(Math.sqrt(d.area) * S.pxPerM, 3 * k, 26 * k)
+    : 5 * k;
+
+  if (picked) {
+    g.appendChild(mk('path', { d: path, fill: 'none', stroke: 'var(--measure)',
+      'stroke-width': wPx + 9 * k, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: .40 }));
+  }
+  g.appendChild(mk('path', { d: path, fill: 'none', stroke: col, opacity: .20,
+    'stroke-width': wPx, 'stroke-linecap': 'butt', 'stroke-linejoin': 'round' }));
+  g.appendChild(mk('path', { d: path, fill: 'none', stroke: col,
+    'stroke-width': 1.5 * k, 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+    'stroke-dasharray': d.sock ? (5 * k) + ' ' + (3 * k) : '' }));
+  if (d.orphan) {
+    g.appendChild(mk('path', { d: path, fill: 'none', stroke: 'var(--alarm)',
+      'stroke-width': 1.2 * k, 'stroke-dasharray': (4 * k) + ' ' + (4 * k) }));
+  }
+
+  // outlets taken off along the length, marked as ticks across the band
+  if (d.nOutlets > 0 && !d.sock) {
+    for (let i = 1; i <= d.nOutlets; i++) {
+      const at = polyAt(pts, i / (d.nOutlets + 1));
+      const nx = -Math.sin(at.ang), ny = Math.cos(at.ang);
+      g.appendChild(mk('line', { x1: at.x - nx * wPx * 0.8, y1: at.y - ny * wPx * 0.8,
+        x2: at.x + nx * wPx * 0.8, y2: at.y + ny * wPx * 0.8,
+        stroke: col, 'stroke-width': 1.8 * k }));
+    }
+  }
+
+  if (S.pxPerM > 0) {
+    let bi = 1, bl = -1;
+    for (let i = 1; i < pts.length; i++) {
+      const L = dist(pts[i - 1], pts[i]);
+      if (L > bl) { bl = L; bi = i; }
+    }
+    const a = pts[bi - 1], b = pts[bi];
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const bits = [segName(d), fmt(d.flow || 0, 0) + ' l/s'];
+    if (d.vel > 0.01) bits.push(fmt(d.vel, 1) + ' m/s');
+    const size = ductSizeLabel(d);
+    if (size) bits.push(size);
+    const txt = bits.join('  ');
+    const wLbl = txt.length * 5.9 + 12;
+    g.appendChild(mk('rect', { x: mx - wLbl / 2 * k, y: my - 9 * k, width: wLbl * k, height: 16 * k,
+      rx: 2 * k, fill: 'rgba(255,255,255,.93)', stroke: col, 'stroke-width': .9 * k }));
+    g.appendChild(mk('text', { x: mx, y: my + 2.6 * k, 'text-anchor': 'middle',
+      'font-size': 10 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+      fill: d.orphan ? 'var(--alarm)' : col }, txt));
+  }
+}
+
 /* ==========================================================================
    UNIT SYMBOLS
    Drawn square to the sheet and never rotated, so a name and a duty stay
@@ -1820,6 +2122,7 @@ function drawSeg(g, sg, k) {
    indoor units are white with a coloured edge by type, which is what makes
    the two readable apart at a glance on a busy layout.
    ========================================================================== */
+const NODE_EDGE_EXTRA = { outlet: '#2f8f7a', controller: '#6c7ae0' };
 const INDOOR_EDGE = {
   wall:    '#2f8f5b',
   cass900: '#6c7ae0',
@@ -1886,6 +2189,20 @@ function drawUnitGlyph(g, sym, x, y, w, h, colour, k) {
     });
     return;
   }
+  if (sym === 'outlet') {
+    const r = Math.min(w, h) * 0.34;
+    [-1, 0, 1].forEach(i => {
+      const px = cx + i * r * 0.7;
+      S2('M ' + px + ' ' + (cy - r) + ' V ' + (cy + r));
+    });
+    return;
+  }
+  if (sym === 'ctl') {
+    S2('M ' + (cx - w * 0.18) + ' ' + (cy - h * 0.16) + ' H ' + (cx + w * 0.18));
+    S2('M ' + (cx - w * 0.18) + ' ' + cy + ' H ' + (cx + w * 0.18));
+    S2('M ' + (cx - w * 0.10) + ' ' + (cy + h * 0.18) + ' H ' + (cx + w * 0.10));
+    return;
+  }
   if (sym === 'bc' || sym === 'bcs') {
     const n = sym === 'bc' ? 4 : 1;
     const span = w * 0.52;
@@ -1903,12 +2220,13 @@ function drawUnitGlyph(g, sym, x, y, w, h, colour, k) {
 function drawNode(g, n, k) {
   const picked = sel && sel.kind === 'node' && sel.id === n.id;
 
-  if (n.type === 'branch') {
-    const r = 5.2 * k;
+  if (n.type === 'branch' || n.type === 'djoint') {
+    const duct = n.type === 'djoint';
+    const r = (duct ? 4.6 : 5.2) * k;
     if (picked) g.appendChild(mk('circle', { cx: n.x, cy: n.y, r: r + 4 * k, fill: 'none',
       stroke: 'var(--measure)', 'stroke-width': 2.4 * k }));
     g.appendChild(mk('circle', { cx: n.x, cy: n.y, r, fill: 'var(--white)',
-      stroke: 'var(--graphite)', 'stroke-width': 2 * k }));
+      stroke: duct ? DUCT_KINDS.supply.colour : 'var(--graphite)', 'stroke-width': 2 * k }));
     if (S.settings.showHeights !== false) {
       g.appendChild(mk('text', { x: n.x, y: n.y - 9 * k, 'text-anchor': 'middle',
         'font-size': 8 * k, 'font-family': 'Azeret Mono, monospace',
@@ -1926,6 +2244,8 @@ function drawNode(g, n, k) {
 
   const edge = cond ? 'var(--graphite)'
              : bc ? '#5a5d68'
+             : n.type === 'outlet' ? (DUCT_KINDS[n.kind] || DUCT_KINDS.supply).colour
+             : n.type === 'controller' ? NODE_EDGE_EXTRA.controller
              : (INDOOR_EDGE[n.unit] || '#4a9fd8');
   const fill = cond ? 'var(--graphite)' : (n.reached ? 'var(--white)' : '#fdecea');
   const stroke = cond ? 'var(--graphite)' : (n.reached ? edge : 'var(--alarm)');
@@ -1976,6 +2296,12 @@ function drawNode(g, n, k) {
     if (S.settings.showKw !== false && parseFloat(n.kw) > 0) bits.push(fmt(parseFloat(n.kw), 1) + ' kW');
   } else if (bc) {
     bits.push(n.kind === 'single' ? 'BC single' : 'BC controller');
+  } else if (n.type === 'outlet') {
+    bits.push((DUCT_KINDS[n.kind] || DUCT_KINDS.supply).short);
+    if (n.flow > 0) bits.push(fmt(n.flow, 0) + ' l/s' + (n.auto ? '' : ' set'));
+  } else if (n.type === 'controller') {
+    bits.push((CONTROLLER_KINDS[n.kind] || CONTROLLER_KINDS.local).abbr);
+    if ((n.serves || []).length) bits.push(plural(n.serves.length, 'unit'));
   }
   if (S.settings.showHeights !== false) bits.push(fmt(heightOf(n), 2) + ' m');
   if (bits.length) {
@@ -1988,10 +2314,22 @@ function drawNode(g, n, k) {
       fill: 'var(--ink-soft)' }, t));
   }
 
-  if (!cond && !n.reached) {
+  if (!cond && !n.reached && n.type !== 'controller') {
     g.appendChild(mk('text', { x: n.x, y: n.y + yTop - 16 * k, 'text-anchor': 'middle',
       'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 700,
-      fill: 'var(--alarm)' }, 'NOT PIPED'));
+      fill: 'var(--alarm)' }, n.type === 'outlet' ? 'NOT DUCTED' : 'NOT PIPED'));
+  }
+
+  /* A controller's leaders are drawn only while it is selected. Drawing every
+     controller's links all the time buries the pipework under them. */
+  if (n.type === 'controller' && picked) {
+    (n.serves || []).forEach(id => {
+      const u = nodeById(id);
+      if (!u) return;
+      g.appendChild(mk('line', { x1: n.x, y1: n.y, x2: u.x, y2: u.y,
+        stroke: NODE_EDGE_EXTRA.controller, 'stroke-width': 1.2 * k,
+        'stroke-dasharray': (5 * k) + ' ' + (4 * k), opacity: .85 }));
+    });
   }
 }
 
@@ -2028,10 +2366,12 @@ function drawHandles(g, n, k, b) {
 }
 
 /* ---------- ghosts drawn before the click ---------- */
-const PLACE_TOOLS = ['condenser', 'indoor', 'bc'];
+const PLACE_TOOLS = ['condenser', 'indoor', 'bc', 'outlet', 'ctl'];
 
 function drawPlaceGhost(g, k) {
-  const n = { type: tool, unit: armedIndoor, kind: armedBc, x: hoverPt.x, y: hoverPt.y };
+  const type = tool === 'ctl' ? 'controller' : tool;
+  const n = { type, unit: armedIndoor, x: hoverPt.x, y: hoverPt.y,
+    kind: tool === 'bc' ? armedBc : tool === 'outlet' ? armedOutlet : armedCtl };
   const b = unitBox(n, k);
   g.appendChild(mk('rect', { x: n.x - b.w / 2, y: n.y - b.d / 2, width: b.w, height: b.d,
     rx: 2.5 * k, fill: 'rgba(108,122,224,.14)', stroke: 'var(--measure)',
@@ -2043,8 +2383,8 @@ function drawPlaceGhost(g, k) {
   }
 }
 
-function drawSnap(g, k) {
-  const sn = snapAt(hoverPt, draft ? draft.startNode : null);
+function drawSnap(g, k, net) {
+  const sn = snapAt(hoverPt, draft ? draft.startNode : null, net);
   if (!sn) return;
   g.appendChild(mk('circle', { cx: sn.at.x, cy: sn.at.y, r: 10 * k, fill: 'none',
     stroke: 'var(--measure)', 'stroke-width': 2 * k }));
@@ -2110,11 +2450,14 @@ const TOOLS = [
   { id: 'bc',        label: 'BC box', key: 'B', icon: 'M3 7h14v6H3zM7 13v4M13 13v4M10 3v4' },
   { id: 'trace',     label: 'Trace',  key: 'T', icon: 'M2 15l5-9 5 5 6-8' },
   { id: 'joint',     label: 'Joint',  key: 'J', icon: 'M2 12h16M10 12V4' },
+  { id: 'duct',      label: 'Duct',   key: 'D', icon: 'M2 6h16M2 14h16M7 6v8M13 6v8' },
+  { id: 'outlet',    label: 'Outlet', key: 'O', icon: 'M4 4h12v12H4zM7 7v6M10 7v6M13 7v6' },
+  { id: 'ctl',       label: 'Control', key: 'K', icon: 'M5 3h10v14H5zM8 6h4M8 9h4M9 13h2' },
 ];
 
 /* Nothing can be placed or traced until the drawing has a scale: a length
    measured off an uncalibrated drawing means nothing at all. */
-const NEEDS_SCALE = ['condenser', 'indoor', 'bc', 'trace', 'joint'];
+const NEEDS_SCALE = ['condenser', 'indoor', 'bc', 'trace', 'joint', 'duct', 'outlet', 'ctl'];
 
 let armedIndoor = 'cass600';
 let armedBc = 'main';
@@ -2124,7 +2467,7 @@ function buildRail() {
   const rail = el('rail');
   rail.innerHTML = '';
   TOOLS.forEach((t, i) => {
-    if (i === 2 || i === 3 || i === 6) rail.appendChild(document.createElement('hr'));
+    if (i === 2 || i === 3 || i === 6 || i === 8) rail.appendChild(document.createElement('hr'));
     const b = document.createElement('button');
     const locked = scaleNeeded() && NEEDS_SCALE.indexOf(t.id) >= 0;
     b.className = 'tool' + (tool === t.id ? ' on' : '');
@@ -2153,6 +2496,11 @@ const HINTS = {
        + 'into a run already traced.',
   pan: 'Drag to move around the drawing.',
   joint: 'Click along a run to cut a branch joint into it, then trace on from it.',
+  duct: 'Start on a ducted unit, a duct joint or a corner and click along the duct. Finish on an outlet, '
+      + 'a joint or a corner. The unit’s air volume is shared evenly between the outlets until you pin one.',
+  outlet: 'Click where a diffuser or grille sits. Leave its volume at 0 and it takes an even share of '
+      + 'whatever the unit has left.',
+  ctl: 'Click where the controller sits. Tick the units it drives in the inspector afterwards.',
 };
 
 /* ---------- the override key ----------
@@ -2182,10 +2530,10 @@ function setTool(t) {
   const h = el('hint');
   if (HINTS[t]) { el('hintTxt').innerHTML = HINTS[t]; h.classList.add('on'); }
   else h.classList.remove('on');
-  h.classList.toggle('trace', t === 'trace');
+  h.classList.toggle('trace', t === 'trace' || t === 'duct');
   el('orthoChk').checked = !!S.settings.ortho;
   el('hgtIn').value = fmt(traceHeight, 2);
-  const pal = ['indoor', 'bc', 'condenser'].indexOf(t) >= 0;
+  const pal = ['indoor', 'bc', 'condenser', 'outlet', 'duct', 'ctl'].indexOf(t) >= 0;
   el('vpal').classList.toggle('on', pal);
   if (pal) buildPalette();
   render();
@@ -2231,6 +2579,25 @@ function buildPalette() {
           '<button class="vitem' + (armedBc === k ? ' on' : '') + '" data-bc="' + k + '" '
           + 'title="' + esc(note) + '"><span class="vsym" data-sym="' + d.sym + '"></span>'
           + '<span class="vlbl">' + esc(d.label) + '<em>' + esc(note.slice(0, 46)) + '…</em></span></button>').join('');
+  } else if (tool === 'outlet' || tool === 'duct') {
+    el('vpalTitle').textContent = tool === 'duct' ? 'Ductwork' : 'Outlets';
+    el('vpalSub').textContent = tool === 'duct' ? 'then trace the run' : 'click the plan to place';
+    const armed = tool === 'duct' ? armedDuct : armedOutlet;
+    html = '<div class="vgrp">Air</div>' + DUCT_KIND_ORDER.map(k2 => {
+      const d = DUCT_KINDS[k2];
+      return '<button class="vitem' + (armed === k2 ? ' on' : '') + '" data-air="' + k2 + '">'
+        + '<span class="vsym" data-sym="outlet" style="color:' + d.colour + '"></span>'
+        + '<span class="vlbl">' + esc(d.label) + '<em>' + d.short + '</em></span></button>';
+    }).join('');
+  } else if (tool === 'ctl') {
+    el('vpalTitle').textContent = 'Controllers';
+    el('vpalSub').textContent = 'click the plan to place';
+    html = '<div class="vgrp">Control</div>' + CONTROLLER_ORDER.map(k2 => {
+      const d = CONTROLLER_KINDS[k2];
+      return '<button class="vitem' + (armedCtl === k2 ? ' on' : '') + '" data-ctl="' + k2 + '">'
+        + '<span class="vsym" data-sym="ctl"></span>'
+        + '<span class="vlbl">' + esc(d.label) + '<em>' + d.abbr + '</em></span></button>';
+    }).join('');
   } else {
     el('vpalTitle').textContent = 'Condensers';
     el('vpalSub').textContent = 'pick the system, then click';
@@ -2254,6 +2621,13 @@ function buildPalette() {
     b.addEventListener('click', () => { armedBc = b.dataset.bc; buildPalette(); render(); }));
   box.querySelectorAll('[data-sys]').forEach(b =>
     b.addEventListener('click', () => { armedSystem = b.dataset.sys; S.settings.defaultSystem = armedSystem; buildPalette(); render(); }));
+  box.querySelectorAll('[data-air]').forEach(b =>
+    b.addEventListener('click', () => {
+      if (tool === 'duct') armedDuct = b.dataset.air; else armedOutlet = b.dataset.air;
+      buildPalette(); render();
+    }));
+  box.querySelectorAll('[data-ctl]').forEach(b =>
+    b.addEventListener('click', () => { armedCtl = b.dataset.ctl; buildPalette(); render(); }));
   el('vpalKw').checked = S.settings.showKw !== false;
 }
 
@@ -2297,6 +2671,87 @@ function addBc(p) {
   render();
 }
 
+let armedOutlet = 'supply';
+let armedDuct = 'supply';
+let armedCtl = 'local';
+
+function addOutlet(p) {
+  pushUndo('add outlet');
+  const n = { id: nid(), type: 'outlet', x: p.x, y: p.y,
+    name: nextName(armedOutlet === 'extract' ? 'EA' : 'SA'),
+    kind: armedOutlet, model: '', lps: 0, height: S.settings.indoorHeight };
+  S.nodes.push(n);
+  select('node', n.id);
+  render();
+}
+function addController(p) {
+  pushUndo('add controller');
+  const n = { id: nid(), type: 'controller', x: p.x, y: p.y,
+    name: nextName('CTL'), kind: armedCtl, model: '', serves: [], height: 1.40 };
+  S.nodes.push(n);
+  select('node', n.id);
+  render();
+}
+
+function finishDuct(endNode, endOff) {
+  if (!draft || draft.pts.length < 2) { draft = null; render(); return; }
+  pushUndo('trace a duct');
+  const pts = dedupePts(draft.pts);
+  if (pts.length < 2 || polyLenPx(pts) < stubPx() * 0.5) {
+    draft = null; toast('Too short to be a duct'); render(); return;
+  }
+  const d = {
+    id: nid(), a: draft.startNode, b: endNode, pts,
+    aOff: draft.startOff || null, bOff: endOff || null,
+    ref: 'Duct ' + (S.ducts.length + 1), name: '',
+    kind: armedDuct, shape: S.settings.defaultDuctShape || 'circ',
+    dia: 0, w: 0, h: 0, outlets: 0, outletLps: 0, sock: false,
+    height: null, extraRise: 0, note: '',
+  };
+  S.ducts.push(d);
+  draft = null;
+  if (S.settings.autoName !== false) autoNameDucts(true);
+  select('duct', d.id);
+  render();
+  toast(segName(d) + ' — ' + fmt(d.routeM || ductLenM(d), 1) + ' m of duct');
+}
+
+/* Ductwork is named off the unit it serves: D1, D2 … mains from the unit,
+   cut into D1.1, D1.2 by the joints along them, and E1, E2 … the branches
+   off them. Kept apart from the pipework's M and B so a schedule can never
+   confuse a duct with a refrigerant line. */
+function autoNameDucts(quiet) {
+  solveDucts();
+  let m = 0, b = 0;
+  const runs = {};
+  const walk = (nodeId, runName, level) => {
+    const outs = S.ducts.filter(d => d.up === nodeId && !d.orphan);
+    outs.sort((x, y) => (y.flow || 0) - (x.flow || 0));
+    let sub = 0;
+    outs.forEach((d, i) => {
+      let name, lvl;
+      if (!runName) { name = 'D' + (++m); lvl = 0; }
+      else if (i === 0) { name = runName; lvl = level; }
+      else if (level === 0) { name = 'E' + (++b); lvl = 1; }
+      else { name = runName + LETTERS[sub++ % 26]; lvl = 2; }
+      d.ref = name;
+      (runs[name] = runs[name] || []).push(d);
+      const dn = nodeById(d.down);
+      if (dn && dn.type !== 'outlet') walk(dn.id, name, lvl);
+    });
+  };
+  S.nodes.filter(n => n.type === 'indoor' && n.unit === 'ducted').forEach(u => walk(u.id, null, -1));
+  Object.keys(runs).forEach(ref => {
+    const list = runs[ref];
+    if (list.length < 2) return;
+    list.forEach((d, i) => { d.ref = ref + '.' + (i + 1); });
+  });
+  let o = 0;
+  S.ducts.filter(d => d.orphan).forEach(d => { d.ref = 'XD' + (++o); });
+  solve();
+  if (!quiet) { render(); toast('Ducts renamed — D mains from the unit, E branches'); }
+}
+
 /* The height of a run at a fraction along it, so a joint cut into the middle
    of a run picks up the height the pipe is actually at there rather than the
    project default. */
@@ -2306,8 +2761,9 @@ function heightAlong(sg, legIndex, tLeg) {
 }
 
 /* Cut a section in two at a point along it and put a branch joint there. */
-function splitSegment(sg, hit) {
-  const j = { id: nid(), type: 'branch', x: hit.q.x, y: hit.q.y,
+function splitSegment(sg, hit, net) {
+  const duct = net === 'duct' || !!sg.kind;
+  const j = { id: nid(), type: duct ? 'djoint' : 'branch', x: hit.q.x, y: hit.q.y,
     height: heightAlong(sg, hit.i, hit.t) };
   S.nodes.push(j);
 
@@ -2323,19 +2779,26 @@ function splitSegment(sg, hit) {
     sizeLiquid: sg.sizeLiquid, sizeGas: sg.sizeGas, sizeHp: sg.sizeHp,
     insulation: sg.insulation, note: sg.note,
   };
+  if (duct) {
+    /* The cut half keeps the size and the kind, but never the outlets — they
+       are on a length of duct, and which half they are on is a decision only
+       the person cutting it can make. */
+    Object.assign(other, { kind: sg.kind, shape: sg.shape, dia: sg.dia, w: sg.w, h: sg.h,
+      outlets: 0, outletLps: 0, sock: false });
+  }
   sg.b = j.id;
   sg.bOff = null;
   sg.pts = head;
-  S.segs.push(other);
+  (duct ? S.ducts : S.segs).push(other);
   return j;
 }
 function clonePt(p) { return p.h === undefined ? { x: p.x, y: p.y } : { x: p.x, y: p.y, h: p.h }; }
 
 /* Turn a corner that has already been traced into a real joint, so a branch
    can leave from exactly that corner rather than a few pixels along. */
-function promoteVertex(sg, i) {
+function promoteVertex(sg, i, net) {
   const p = sg.pts[i];
-  return splitSegment(sg, { q: { x: p.x, y: p.y }, i, t: 0 });
+  return splitSegment(sg, { q: { x: p.x, y: p.y }, i, t: 0 }, net);
 }
 
 /* ==========================================================================
@@ -2353,13 +2816,16 @@ function nodeWord(n) {
   return n.type === 'condenser' ? 'condenser'
        : n.type === 'indoor' ? 'indoor unit'
        : n.type === 'bc' ? (n.kind === 'single' ? 'BC box' : 'BC controller')
+       : n.type === 'outlet' ? 'outlet'
+       : n.type === 'controller' ? 'controller'
+       : n.type === 'djoint' ? 'duct joint'
        : 'joint';
 }
 /* Where a click at p would land on this unit. Anywhere on the block counts —
    that is the whole point — with a magnet at the centre so "just connect it"
    is still one click and old take-offs keep connecting where they always did. */
 function snapNodeAt(n, p) {
-  if (n.type === 'branch' || !p) {
+  if (n.type === 'branch' || n.type === 'djoint' || !p) {
     return { kind: 'node', node: n, at: { x: n.x, y: n.y }, off: null,
              what: nodeWord(n), name: n.name || '' };
   }
@@ -2374,12 +2840,16 @@ function snapNodeAt(n, p) {
 }
 function snapNode(n) { return snapNodeAt(n, null); }
 function snapVertex(sg, i) {
-  return { kind: 'vertex', seg: sg, i, at: { x: sg.pts[i].x, y: sg.pts[i].y },
-           what: 'corner', name: segName(sg) };
+  return { kind: 'vertex', seg: sg, i, net: sg.kind ? 'duct' : 'pipe',
+           at: { x: sg.pts[i].x, y: sg.pts[i].y }, what: 'corner', name: segName(sg) };
 }
+/* The runs of one network or the other. A duct section carries `kind`; a
+   refrigerant section never does, which is what tells them apart. */
+function runsOf(net) { return net === 'duct' ? S.ducts : S.segs; }
 /* Pure — it works out what a click at p would connect to and changes nothing,
    so the same answer can be drawn and then acted on. */
-function snapAt(p, skipId) {
+function snapAt(p, skipId, net) {
+  net = net || 'pipe';
   const tol = SNAP_PX / zoom;
   let best = null;
   const take = (d, c) => { if (d <= tol && (!best || d < best.d)) best = Object.assign({ d }, c); };
@@ -2390,20 +2860,21 @@ function snapAt(p, skipId) {
      a corner of some run passing across it. */
   S.nodes.forEach(n => {
     if (skipId && n.id === skipId) return;
-    if (n.type === 'branch') { take(dist(n, p), snapNodeAt(n, p)); return; }
+    if (!inNet(n, net)) return;
+    if (n.type === 'branch' || n.type === 'djoint') { take(dist(n, p), snapNodeAt(n, p)); return; }
     const b = unitBoxTrue(n);
     const q = toLocal(n, p, b.rot);
     take(Math.max(Math.abs(q.x) - b.w / 2, Math.abs(q.y) - b.d / 2), snapNodeAt(n, p));
   });
-  S.segs.forEach(sg => {
+  runsOf(net).forEach(sg => {
     for (let i = 1; i < sg.pts.length - 1; i++) take(dist(sg.pts[i], p), snapVertex(sg, i));
   });
   if (best) return best;
 
-  const h = hitSeg(p, 13);
+  const h = hitSeg(p, 13, net);
   if (!h) return null;
   if (S.settings.snapPoints === false || overrideKey) {
-    return { kind: 'run', seg: h.seg, r: h.r, at: { x: h.r.q.x, y: h.r.q.y },
+    return { kind: 'run', seg: h.seg, r: h.r, net, at: { x: h.r.q.x, y: h.r.q.y },
              d: h.r.d, what: 'new joint here', name: segName(h.seg) };
   }
   let bp = null;
@@ -2423,8 +2894,8 @@ function snapAt(p, skipId) {
 function connectAt(sn) {
   if (!sn) return null;
   if (sn.kind === 'node') return { node: sn.node, off: sn.off || null, at: sn.at };
-  if (sn.kind === 'vertex') { const n = promoteVertex(sn.seg, sn.i); return { node: n, off: null, at: { x: n.x, y: n.y } }; }
-  if (sn.kind === 'run') { const n = splitSegment(sn.seg, sn.r); return { node: n, off: null, at: { x: n.x, y: n.y } }; }
+  if (sn.kind === 'vertex') { const n = promoteVertex(sn.seg, sn.i, sn.net); return { node: n, off: null, at: { x: n.x, y: n.y } }; }
+  if (sn.kind === 'run') { const n = splitSegment(sn.seg, sn.r, sn.net); return { node: n, off: null, at: { x: n.x, y: n.y } }; }
   return null;
 }
 
@@ -2440,7 +2911,7 @@ function orthoPoint(prev, p) {
 }
 
 function previewPoint(p) {
-  const sn = snapAt(p, draft ? draft.startNode : null);
+  const sn = snapAt(p, draft ? draft.startNode : null, draft && draft.kind === 'duct' ? 'duct' : 'pipe');
   if (sn) return { x: sn.at.x, y: sn.at.y, h: traceHeight };
   const prev = draft && draft.pts.length ? draft.pts[draft.pts.length - 1] : null;
   const q = orthoPoint(prev, p);
@@ -2459,6 +2930,9 @@ function dedupePts(pts) {
 }
 
 function stubPx() { return clamp(S.pxPerM > 0 ? S.pxPerM * 0.4 : 8, 4, 30); }
+/* Ductwork is traced at its own height, which starts above the pipe run
+   because that is usually where it sits, and is changed the same way. */
+function ductTraceHeight() { return traceHeight; }
 
 function finishTrace(endNode, endOff) {
   if (!draft || draft.pts.length < 2) { draft = null; render(); return; }
@@ -2489,6 +2963,22 @@ function finishTrace(endNode, endOff) {
    ========================================================================== */
 function deleteSelected() {
   if (!sel) return;
+  if (sel.kind === 'duct') {
+    const d = ductById(sel.id);
+    if (!d) return;
+    asOneUndo('delete ' + segName(d), () => {
+      S.ducts = S.ducts.filter(x => x.id !== d.id);
+      [d.a, d.b].forEach(id => {
+        const n = nodeById(id);
+        if (n && n.type === 'djoint' && ductNeighbours(id).length === 0) {
+          S.nodes = S.nodes.filter(x => x.id !== id);
+        }
+      });
+      if (S.settings.autoName !== false) autoNameDucts(true);
+    });
+    sel = null; closeInspector(); render();
+    return;
+  }
   if (sel.kind === 'seg') {
     const sg = segById(sel.id);
     if (!sg) return;
@@ -2543,8 +3033,11 @@ function deleteSelected() {
 
   asOneUndo('delete ' + (n.name || nodeWord(n)), () => {
     S.segs = S.segs.filter(s => s.a !== n.id && s.b !== n.id);
+    S.ducts = S.ducts.filter(d => d.a !== n.id && d.b !== n.id);
+    // a controller that drove this unit no longer does
+    S.nodes.forEach(x => { if (x.serves) x.serves = x.serves.filter(id => id !== n.id); });
     S.nodes = S.nodes.filter(x => x.id !== n.id);
-    if (S.settings.autoName !== false) autoNameSections(true);
+    if (S.settings.autoName !== false) { autoNameSections(true); autoNameDucts(true); }
   });
   sel = null; closeInspector(); render();
 }
@@ -2575,6 +3068,10 @@ function mergeAtBranch(j, nb) {
    is a figure you cannot change.
    ========================================================================== */
 function select(kind, id) { sel = { kind, id }; openInspector(); render(); }
+function selectedRun() {
+  if (!sel) return null;
+  return sel.kind === 'seg' ? segById(sel.id) : sel.kind === 'duct' ? ductById(sel.id) : null;
+}
 function closeInspector() { el('body').classList.remove('insp'); sel = null; render(); }
 
 function openInspector() {
@@ -2587,11 +3084,18 @@ function openInspector() {
     if (n.type === 'condenser') { kind = 'Condenser'; name = n.name || 'Condenser'; html = condenserForm(n); }
     else if (n.type === 'indoor') { kind = 'Indoor unit'; name = n.name || 'Indoor unit'; html = indoorForm(n); }
     else if (n.type === 'bc') { kind = n.kind === 'single' ? 'Single BC box' : 'BC controller'; name = n.name || 'BC'; html = bcForm(n); }
+    else if (n.type === 'outlet') { kind = 'Outlet'; name = n.name || 'Outlet'; html = outletForm(n); }
+    else if (n.type === 'controller') { kind = 'Controller'; name = n.name || 'Controller'; html = controllerForm(n); }
+    else if (n.type === 'djoint') { kind = 'Duct joint'; name = 'Duct joint'; html = branchForm(n); }
     else { kind = 'Branch joint'; name = 'Joint'; html = branchForm(n); }
   } else if (sel.kind === 'seg') {
     const sg = segById(sel.id);
     if (!sg) { closeInspector(); return; }
     kind = 'Pipe section'; name = segName(sg); html = segForm(sg);
+  } else if (sel.kind === 'duct') {
+    const d = ductById(sel.id);
+    if (!d) { closeInspector(); return; }
+    kind = 'Duct section'; name = segName(d); html = ductForm(d);
   }
   el('insKind').textContent = kind;
   el('insName').textContent = name;
@@ -2715,6 +3219,7 @@ function indoorForm(n) {
     + '<label class="fld"><span>Heating <em>kW</em></span><input type="number" id="fKwH" step="0.1" value="'
     + (n.kwHeat || 0) + '"></label></div>'
     + heightField(heightOf(n))
+    + (n.unit === 'ducted' ? fanFields(n) : '')
     + footprintFields(n)
     + '<label class="fld"><span>Room or reference</span><input id="fRoom" value="' + esc(n.room || '')
     + '" placeholder="e.g. Meeting room 2"></label>';
@@ -2755,6 +3260,173 @@ function bcForm(n) {
   ]);
   html += '<div class="note">Three pipes in, two pipes out, on a 3-pipe system — the section count '
        + 'switches at the box on its own. Two pipes both sides on a 2-pipe BC system.</div>';
+  return html + rowBtns(false);
+}
+
+/* ---------- the fan on a ducted unit ----------
+   Air volume and external resistance at each of the three speeds, straight
+   off the manufacturer's data. The speed the ductwork is set out at is picked
+   here too, and that is the volume the duct network shares out. */
+function fanFields(n) {
+  const sp = designSpeed(n);
+  return '<div class="fld"><span>Airflow and resistance <em>from the unit’s data</em></span>'
+    + '<div class="hpts">'
+    + '<div class="hpt" style="grid-template-columns:60px 1fr 1fr 26px">'
+    + '<span class="ix">Speed</span><span class="ix">l/s</span><span class="ix">Pa</span><span></span></div>'
+    + FAN_SPEEDS.map(f => {
+        const v = fanAt(n, f.key);
+        return '<div class="hpt" style="grid-template-columns:60px 1fr 1fr 26px">'
+          + '<span class="ix" style="text-align:left">' + f.label + '</span>'
+          + '<input type="number" step="5" min="0" data-fan="' + f.key + '" value="' + v.v + '">'
+          + '<input type="number" step="5" min="0" data-pa="' + f.key + '" value="' + v.p + '">'
+          + '<span class="ix" title="Set out the ductwork at this speed">'
+          + '<input type="radio" name="fanSpeed" data-speed="' + f.key + '"'
+          + (sp === f.key ? ' checked' : '') + ' style="width:14px;height:14px;margin:0"></span>'
+          + '</div>';
+      }).join('')
+    + '</div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-top:5px">'
+    + 'The ticked speed is the volume the ductwork off this unit shares out — '
+    + '<b>' + fmt(designFlow(n), 0) + ' l/s</b> at ' + fmt(fanAt(n, sp).p, 0) + ' Pa.</div></div>';
+}
+
+/* ---------- outlet ---------- */
+function outletForm(n) {
+  const unit = n.unitId ? nodeById(n.unitId) : null;
+  let html = '<label class="fld"><span>Name</span><input id="fName" value="' + esc(n.name) + '"></label>'
+    + '<label class="fld"><span>Air</span><select id="fAir">'
+    + DUCT_KIND_ORDER.map(k2 => '<option value="' + k2 + '"' + (n.kind === k2 ? ' selected' : '') + '>'
+        + esc(DUCT_KINDS[k2].label) + '</option>').join('')
+    + '</select></label>'
+    + '<label class="fld"><span>Type or model</span><input id="fModel" value="' + esc(n.model || '')
+    + '" placeholder="e.g. 300×300 4-way diffuser"></label>'
+    + '<label class="fld"><span>Air volume <em>l/s — leave at 0 to take an even share</em></span>'
+    + '<input type="number" id="fLps" step="1" min="0" value="' + (parseFloat(n.lps) || 0) + '"></label>'
+    + heightField(heightOf(n))
+    + '<label class="fld"><span>Room or reference</span><input id="fRoom" value="' + esc(n.room || '') + '"></label>';
+
+  const rows = [];
+  if (unit) {
+    rows.push(['Off unit', esc(unit.name)]);
+    rows.push(['Unit at ' + designSpeed(unit), fmt(designFlow(unit), 0) + ' l/s']);
+  }
+  rows.push(['This outlet', fmt(n.flow || 0, 1) + ' l/s' + (n.auto ? ' <span class="chip">even share</span>' : '')]);
+  html += derivedBox(rows);
+  if (!n.reached) html += '<div class="note bad">No duct reaches this outlet, so it is in no air '
+    + 'total. Trace a duct to it.</div>';
+  else if (n.auto) html += '<div class="note">Taking an even share of what the unit has left after '
+    + 'anything pinned to a figure. Type a volume here to pin this one.</div>';
+  return html + rowBtns(true);
+}
+
+/* ---------- controller ---------- */
+function controllerForm(n) {
+  const serves = n.serves || [];
+  const indoors = S.nodes.filter(x => x.type === 'indoor');
+  let html = '<label class="fld"><span>Name</span><input id="fName" value="' + esc(n.name) + '"></label>'
+    + '<label class="fld"><span>Kind</span><select id="fKind">'
+    + CONTROLLER_ORDER.map(k2 => '<option value="' + k2 + '"' + (n.kind === k2 ? ' selected' : '') + '>'
+        + esc(CONTROLLER_KINDS[k2].label) + '</option>').join('')
+    + '</select></label>'
+    + '<label class="fld"><span>Model</span><input id="fModel" value="' + esc(n.model || '')
+    + '" placeholder="e.g. PAR-40MAA"></label>'
+    + heightField(heightOf(n), 'Mounting height above finished floor')
+    + '<label class="fld"><span>Location note</span><input id="fRoom" value="' + esc(n.room || '')
+    + '" placeholder="e.g. beside the door, 1.4 m aff"></label>';
+
+  html += '<div class="fld"><span>Units this controller drives</span>'
+    + '<div style="display:flex;gap:6px;margin-bottom:6px">'
+    + '<button class="btn ghost sm" id="fCtlAll">All indoor units</button>'
+    + '<button class="btn ghost sm" id="fCtlNone">None</button></div>'
+    + (indoors.length
+        ? '<div class="hpts">' + indoors.map(u =>
+            '<label class="hpt" style="grid-template-columns:22px 1fr auto;cursor:pointer">'
+            + '<input type="checkbox" data-serve="' + u.id + '"'
+            + (serves.indexOf(u.id) >= 0 ? ' checked' : '') + ' style="width:15px;height:15px">'
+            + '<span>' + esc(u.name || 'unit') + '</span>'
+            + '<span class="rise">' + esc((INDOOR_TYPES[u.unit] || {}).abbr || '') + '</span></label>').join('')
+          + '</div>'
+        : '<div class="note">No indoor units placed yet.</div>')
+    + '</div>';
+
+  html += derivedBox([
+    ['Kind', (CONTROLLER_KINDS[n.kind] || CONTROLLER_KINDS.local).label],
+    ['Drives', plural(serves.length, 'indoor unit')],
+  ]);
+  html += '<div class="note">Selected, it draws a dashed leader to every unit it drives. Controllers '
+       + 'are not on the pipework or the ductwork — they are located, named and scheduled.</div>';
+  return html + rowBtns(true);
+}
+
+/* ---------- duct section ---------- */
+function ductForm(d) {
+  const up = nodeById(d.up != null ? d.up : d.a);
+  const dn = nodeById(d.down != null ? d.down : d.b);
+  const unit = d.unitId ? nodeById(d.unitId) : null;
+  const hs = heightsOf(d);
+  const rect = d.shape === 'rect';
+
+  let html = '<label class="fld"><span>Section name <em>blank uses ' + esc(d.ref || '—') + '</em></span>'
+    + '<input id="fDName" value="' + esc(d.name || '') + '" placeholder="' + esc(d.ref || '') + '"></label>'
+    + '<label class="fld"><span>Air</span><select id="fDKind">'
+    + DUCT_KIND_ORDER.map(k2 => '<option value="' + k2 + '"' + (d.kind === k2 ? ' selected' : '') + '>'
+        + esc(DUCT_KINDS[k2].label) + '</option>').join('')
+    + '</select></label>';
+
+  html += '<label class="fld"><span>Duct shape</span><select id="fDShape">'
+    + Object.keys(DUCT_SHAPES).map(k2 => '<option value="' + k2 + '"'
+        + (d.shape === k2 ? ' selected' : '') + '>' + esc(DUCT_SHAPES[k2]) + '</option>').join('')
+    + '</select></label>';
+  html += rect
+    ? '<div class="row2">'
+      + '<label class="fld"><span>Width <em>mm</em></span><input type="number" id="fDW" step="10" value="' + (d.w || 0) + '"></label>'
+      + '<label class="fld"><span>Height <em>mm</em></span><input type="number" id="fDH" step="10" value="' + (d.h || 0) + '"></label></div>'
+    : '<label class="fld"><span>Diameter <em>mm</em></span>'
+      + '<input type="number" id="fDDia" step="5" value="' + (d.dia || 0) + '"></label>';
+  const sug = suggestDia(d.flow, S.settings.ductVel);
+  if (sug) html += '<div style="display:flex;gap:8px;margin:-4px 0 12px;align-items:center">'
+    + '<button class="btn ghost sm" id="fDSug">Use Ø' + sug + '</button>'
+    + '<span style="font-size:11.5px;color:var(--ink-soft)">round duct at about '
+    + fmt(S.settings.ductVel, 1) + ' m/s for ' + fmt(d.flow || 0, 0) + ' l/s</span></div>';
+
+  html += '<div class="fld"><span>Air off this section</span>'
+    + '<div class="row2">'
+    + '<input type="number" id="fDOut" step="1" min="0" value="' + (parseInt(d.outlets, 10) || 0) + '" title="Number of outlets on this section">'
+    + '<input type="number" id="fDOutLps" step="1" min="0" value="' + (parseFloat(d.outletLps) || 0) + '" title="Total l/s off this section — 0 shares evenly">'
+    + '</div>'
+    + '<div style="display:flex;gap:10px;margin-top:4px;font-size:10px;color:var(--muted)">'
+    + '<span style="flex:1">outlets on it</span><span style="flex:1">l/s total, 0 = even share</span></div>'
+    + '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;font-size:12.5px">'
+    + '<input type="checkbox" id="fDSock"' + (d.sock ? ' checked' : '') + ' style="width:16px;height:16px;margin-top:2px">'
+    + '<span><b>Ventilated sock</b><br><span style="color:var(--ink-soft);font-size:11.5px">'
+    + 'The whole length is the outlet — the air is spread evenly along it and reported per metre.'
+    + '</span></span></label></div>';
+
+  html += '<label class="fld"><span>Note</span><textarea id="fDNote">' + esc(d.note || '') + '</textarea></label>';
+
+  const rows = [
+    ['From', esc(up ? (up.name || nodeWord(up)) : '—')],
+    ['To', esc(dn ? (dn.name || nodeWord(dn)) : '—')],
+    ['Length', fmt(d.lengthM || 0, 2) + ' m'],
+    ['<b>Carries</b>', '<b>' + fmt(d.flow || 0, 0) + ' l/s</b>'],
+  ];
+  if (d.area > 0) {
+    rows.push(['Free area', fmt(d.area, 4) + ' m²']);
+    rows.push(['<b>Velocity</b>', '<b>' + fmt(d.vel || 0, 2) + ' m/s</b>']);
+  }
+  if (d.takeOff > 0) {
+    rows.push(['Off this section', fmt(d.takeOff, 1) + ' l/s']);
+    if (d.sock) rows.push(['Along the sock', fmt(d.perMetre, 1) + ' l/s per metre']);
+    else if (d.nOutlets > 0) rows.push(['Each outlet', fmt(d.perOutlet, 1) + ' l/s × ' + d.nOutlets]);
+  }
+  if (unit) rows.push(['Off unit', esc(unit.name) + ' — ' + fmt(designFlow(unit), 0) + ' l/s at ' + designSpeed(unit)]);
+  rows.push(['Height', Math.abs(hs[0] - hs[hs.length - 1]) < 0.005
+    ? fmt(hs[0], 2) + ' m' : fmt(hs[0], 2) + '–' + fmt(hs[hs.length - 1], 2) + ' m']);
+  html += derivedBox(rows);
+
+  if (d.orphan) html += '<div class="note bad">This duct is not connected to a ducted unit, so it '
+    + 'carries no air. Join one end to the unit, a duct joint or an outlet.</div>';
+  else if (!(d.area > 0)) html += '<div class="note">Give it a size and the velocity comes with it.</div>';
   return html + rowBtns(false);
 }
 
@@ -2978,6 +3650,74 @@ function wireInspector() {
     });
   }
 
+  /* ---- ducted unit fan data ---- */
+  if (n && n.unit === 'ducted') {
+    const setFan = (key, field, v) => {
+      n.fan = n.fan || {};
+      n.fan[key] = n.fan[key] || {};
+      n.fan[key][field] = v;
+    };
+    el('insBody').querySelectorAll('[data-fan]').forEach(i =>
+      i.addEventListener('change', () => { setFan(i.dataset.fan, 'v', parseFloat(i.value) || 0); render(); openInspector(); }));
+    el('insBody').querySelectorAll('[data-pa]').forEach(i =>
+      i.addEventListener('change', () => { setFan(i.dataset.pa, 'p', parseFloat(i.value) || 0); render(); openInspector(); }));
+    el('insBody').querySelectorAll('[data-speed]').forEach(i =>
+      i.addEventListener('change', () => {
+        pushUndo('change the design fan speed');
+        n.fanSpeed = i.dataset.speed; render(); openInspector();
+      }));
+  }
+
+  /* ---- outlet ---- */
+  on('fAir', 'change', e => change('change the air on ' + (n.name || 'outlet'), () => { n.kind = e.target.value; }));
+  on('fLps', 'change', e => {
+    pushUndo('set an outlet volume');
+    n.lps = parseFloat(e.target.value) || 0;
+    render(); openInspector();
+  });
+
+  /* ---- controller ---- */
+  if (n && n.type === 'controller') {
+    el('insBody').querySelectorAll('[data-serve]').forEach(cb =>
+      cb.addEventListener('change', () => {
+        pushUndo('change what ' + (n.name || 'the controller') + ' drives');
+        const id = parseInt(cb.dataset.serve, 10);
+        n.serves = n.serves || [];
+        if (cb.checked) { if (n.serves.indexOf(id) < 0) n.serves.push(id); }
+        else n.serves = n.serves.filter(x => x !== id);
+        render(); openInspector();
+      }));
+    on('fCtlAll', 'click', () => change('drive every indoor unit', () => {
+      n.serves = S.nodes.filter(x => x.type === 'indoor').map(x => x.id);
+    }));
+    on('fCtlNone', 'click', () => change('drive nothing', () => { n.serves = []; }));
+  }
+
+  /* ---- duct section ---- */
+  const d = (sel && sel.kind === 'duct') ? ductById(sel.id) : null;
+  if (d) {
+    const redo = () => { render(); openInspector(); };
+    on('fDName', 'input', e => { d.name = e.target.value; render(); el('insName').textContent = segName(d); });
+    on('fDNote', 'input', e => { d.note = e.target.value; });
+    on('fDKind', 'change', e => { pushUndo('change duct air'); d.kind = e.target.value; redo(); });
+    on('fDShape', 'change', e => { pushUndo('change duct shape'); d.shape = e.target.value; redo(); });
+    on('fDDia', 'change', e => { pushUndo('size a duct'); d.dia = parseFloat(e.target.value) || 0; redo(); });
+    on('fDW', 'change', e => { pushUndo('size a duct'); d.w = parseFloat(e.target.value) || 0; redo(); });
+    on('fDH', 'change', e => { pushUndo('size a duct'); d.h = parseFloat(e.target.value) || 0; redo(); });
+    on('fDSug', 'click', () => {
+      pushUndo('size a duct');
+      d.shape = 'circ'; d.dia = suggestDia(d.flow, S.settings.ductVel); redo();
+    });
+    on('fDOut', 'change', e => { pushUndo('set outlets'); d.outlets = parseInt(e.target.value, 10) || 0; redo(); });
+    on('fDOutLps', 'change', e => { pushUndo('set an air volume'); d.outletLps = parseFloat(e.target.value) || 0; redo(); });
+    on('fDSock', 'change', e => {
+      pushUndo('mark a sock');
+      d.sock = e.target.checked;
+      if (d.sock && !(parseInt(d.outlets, 10) > 0)) d.outlets = 1;
+      redo();
+    });
+  }
+
   on('fDel', 'click', deleteSelected);
   on('fDup', 'click', () => {
     if (!n) return;
@@ -3111,7 +3851,36 @@ function auditTake() {
       + ' m has fewer than three sections on it, so it is a corner rather than a joint.');
   });
 
-  const hs = S.nodes.filter(n => n.type !== 'branch').map(heightOf);
+  /* ---- ductwork ---- */
+  S.ducts.filter(d => d.orphan).forEach(d =>
+    issues.push(segName(d) + ' is not connected to a ducted unit, so it carries no air.'));
+  S.nodes.filter(n => n.type === 'outlet' && !n.reached).forEach(n =>
+    issues.push(n.name + ' has no duct to it.'));
+  (S.ductSystems || []).forEach(x => {
+    if (!x.ducts.length) return;
+    if (!(x.total > 0)) {
+      issues.push(x.unit.name + ' has ductwork on it but no air volume against its '
+        + x.speed + ' fan speed, so nothing can be shared out.');
+      return;
+    }
+    if (Math.abs(x.delivered - x.total) > Math.max(1, x.total * 0.005)) {
+      issues.push(x.unit.name + ' moves ' + fmt(x.total, 0) + ' l/s but its outlets take '
+        + fmt(x.delivered, 0) + ' l/s — ' + (x.delivered > x.total ? 'over' : 'under')
+        + ' by ' + fmt(Math.abs(x.delivered - x.total), 0) + ' l/s.');
+    }
+    if (!x.nOutlets) warns.push(x.unit.name + ' has ductwork but nothing taking air off it.');
+    x.ducts.filter(d => !(d.area > 0)).forEach(d =>
+      warns.push(segName(d) + ' has no duct size, so no velocity can be worked out.'));
+    if (x.maxVel > 0 && x.maxVel > 8)
+      warns.push(x.unit.name + ': the fastest duct on it is ' + fmt(x.maxVel, 1)
+        + ' m/s. Check that against what the job will take.');
+  });
+  S.nodes.filter(n => n.type === 'controller' && !(n.serves || []).length).forEach(n =>
+    warns.push(n.name + ' is not ticked against any indoor unit.'));
+  S.nodes.filter(n => n.type === 'indoor' && n.unit === 'ducted' && !designFlow(n)).forEach(n =>
+    warns.push(n.name + ' is a ducted unit with no airflow data against it.'));
+
+  const hs = S.nodes.filter(n => n.type !== 'branch' && n.type !== 'djoint').map(heightOf);
   if (hs.length > 1 && Math.max.apply(null, hs) - Math.min.apply(null, hs) < 0.05)
     warns.push('Everything is at the same height — the heights may not have been set yet.');
 
@@ -3153,6 +3922,7 @@ function renderSchedule() {
   el('schedTools').style.display = schedTab === 'size' ? 'flex' : 'none';
   if (schedTab === 'pipe') renderPipeSchedule();
   else if (schedTab === 'size') renderSizeSchedule();
+  else if (schedTab === 'duct') renderDuctSchedule();
   else if (schedTab === 'unit') renderUnitSchedule();
   else renderSystemSchedule();
 }
@@ -3368,6 +4138,74 @@ function renderPipeSchedule() {
   renderLimits();
 }
 
+function renderDuctSchedule() {
+  el('schedTitle').textContent = 'Ductwork';
+  const t = totals();
+  el('schedNote').innerHTML = plural(t.ducts, 'duct section') + ' &middot; ' + fmt(t.ductM, 1)
+    + ' m &middot; ' + plural(t.outlets, 'outlet') + ' &middot; ' + fmt(t.airLps, 0) + ' l/s';
+
+  let html = '<thead><tr><th>Section</th><th>Unit</th><th>Air</th><th>From</th><th>To</th>'
+    + '<th class="n">Length<i>m</i></th><th class="n">Carries<i>l/s</i></th>'
+    + '<th>Size<i>mm</i></th><th class="n">Velocity<i>m/s</i></th>'
+    + '<th class="n">Off it<i>l/s</i></th><th class="n">Outlets</th><th>Note</th></tr></thead><tbody>';
+
+  const groups = (S.ductSystems || []).map(x => ({ label: x.unit.name + ' — ' + fmt(x.total, 0)
+    + ' l/s at ' + x.speed + (x.pa ? ', ' + fmt(x.pa, 0) + ' Pa' : ''), ducts: x.ducts, x }));
+  const loose = S.ducts.filter(d => d.orphan);
+  if (loose.length) groups.push({ label: 'Not on a unit', ducts: loose, x: null });
+
+  groups.forEach(gr => {
+    if (!gr.ducts.length) return;
+    html += '<tr class="grp"><td colspan="12">' + esc(gr.label) + '</td></tr>';
+    gr.ducts.slice().sort((a, b) => String(a.ref).localeCompare(String(b.ref), 'en', { numeric: true }))
+      .forEach(d => {
+        const up = nodeById(d.up != null ? d.up : d.a);
+        const dn = nodeById(d.down != null ? d.down : d.b);
+        const pick = sel && sel.kind === 'duct' && sel.id === d.id ? ' pick' : '';
+        html += '<tr class="' + (d.orphan ? 'orph' : 'main') + pick + '" data-duct="' + d.id + '">'
+          + '<td><b>' + esc(segName(d)) + '</b>' + (d.sock ? ' <span class="chip">sock</span>' : '') + '</td>'
+          + '<td class="dim">' + esc(gr.x ? gr.x.unit.name : '—') + '</td>'
+          + '<td class="dim">' + esc((DUCT_KINDS[d.kind] || DUCT_KINDS.supply).short) + '</td>'
+          + '<td class="dim">' + esc(up ? (up.name || nodeWord(up)) : '—') + '</td>'
+          + '<td class="dim">' + esc(dn ? (dn.name || nodeWord(dn)) : '—') + '</td>'
+          + '<td class="n">' + fmt(d.lengthM, 2) + '</td>'
+          + '<td class="n"><b>' + fmt(d.flow, 0) + '</b></td>'
+          + '<td class="dim">' + esc(ductSizeLabel(d) || '—') + '</td>'
+          + '<td class="n">' + (d.vel > 0.01 ? fmt(d.vel, 2) : '—') + '</td>'
+          + '<td class="n">' + (d.takeOff > 0 ? fmt(d.takeOff, 0) : '') + '</td>'
+          + '<td class="n dim">' + (d.nOutlets || '') + (d.sock ? ' sock' : '') + '</td>'
+          + '<td class="dim">' + esc(d.note || '') + '</td></tr>';
+      });
+  });
+
+  // the outlets themselves, which are where the air actually goes
+  const outs = S.nodes.filter(n => n.type === 'outlet');
+  if (outs.length) {
+    html += '<tr class="grp"><td colspan="12">Outlets</td></tr>';
+    outs.sort((a, b) => String(a.name).localeCompare(String(b.name), 'en', { numeric: true })).forEach(o => {
+      const u = o.unitId ? nodeById(o.unitId) : null;
+      const pick = sel && sel.kind === 'node' && sel.id === o.id ? ' pick' : '';
+      html += '<tr class="' + (o.reached ? 'brn' : 'orph') + pick + '" data-node="' + o.id + '">'
+        + '<td><b>' + esc(o.name || '') + '</b></td>'
+        + '<td class="dim">' + esc(u ? u.name : '—') + '</td>'
+        + '<td class="dim">' + esc((DUCT_KINDS[o.kind] || DUCT_KINDS.supply).short) + '</td>'
+        + '<td class="dim" colspan="2">' + esc(o.model || '') + '</td>'
+        + '<td class="n dim">' + fmt(heightOf(o), 2) + '</td>'
+        + '<td class="n"><b>' + fmt(o.flow || 0, 0) + '</b></td>'
+        + '<td colspan="2" class="dim">' + (o.auto ? 'even share' : 'set') + '</td>'
+        + '<td class="n"></td><td class="n"></td>'
+        + '<td class="dim">' + esc(o.room || '') + '</td></tr>';
+    });
+  }
+  html += '</tbody>';
+  el('schedTable').innerHTML = html;
+  el('schedTable').querySelectorAll('[data-duct]').forEach(tr =>
+    tr.addEventListener('click', () => { select('duct', parseInt(tr.dataset.duct, 10)); renderSchedule(); }));
+  el('schedTable').querySelectorAll('[data-node]').forEach(tr =>
+    tr.addEventListener('click', () => { select('node', parseInt(tr.dataset.node, 10)); renderSchedule(); }));
+  renderLimits();
+}
+
 function renderUnitSchedule() {
   el('schedTitle').textContent = 'Units';
   const t = totals();
@@ -3470,7 +4308,16 @@ function renderLimits() {
     + cell('BC boxes', String(t.bc))
     + cell('Joints', String(t.branches))
     + cell('Indoor duty', fmt(t.kwIndoor, 1) + ' kW')
-    + '</div>';
+    + '</div>'
+    + (t.ducts || t.controllers
+        ? '<h4 style="margin-top:10px">Air and control</h4><div class="lgrid">'
+          + cell('Ductwork', fmt(t.ductM, 1) + ' m', true)
+          + cell('Air moved', fmt(t.airLps, 0) + ' l/s', true)
+          + cell('Duct sections', String(t.ducts))
+          + cell('Outlets', String(t.outlets))
+          + cell('Controllers', String(t.controllers))
+          + '</div>'
+        : '');
   box.innerHTML = html;
   box.style.display = 'block';
 }
@@ -3627,6 +4474,16 @@ function build3D() {
     poly.forEach(p => { if (p.Z > zMax) zMax = p.Z; if (p.Z < zMin) zMin = p.Z; });
   });
 
+  // ---- ductwork, drawn as a single band under the pipework ----
+  S.ducts.forEach(d => {
+    const poly = segPoly3D(d, W);
+    if (poly.length < 2) return;
+    const col = (DUCT_KINDS[d.kind] || DUCT_KINDS.supply).colour;
+    items.push({ t: 'line', pts: poly, w: clamp(2 + (d.area > 0 ? Math.sqrt(d.area) * 9 : 1.5), 2, 9),
+      c: col, duct: d.id });
+    poly.forEach(p => { if (p.Z > zMax) zMax = p.Z; if (p.Z < zMin) zMin = p.Z; });
+  });
+
   // ---- units ----
   const bs = bs0;
   /* Exaggerating the vertical stretches everything, boxes included, which
@@ -3643,16 +4500,20 @@ function build3D() {
     ground.push({ t: 'line', pts: [{ X: c.X, Y: c.Y - bs * 0.35, Z: 0 }, { X: c.X, Y: c.Y + bs * 0.35, Z: 0 }], c: '#b3ac9d', w: 1 });
     if (Math.abs(z) > 0.01) items.push({ t: 'line', pts: [foot, c], w: 1.2, c: '#9c958a', dash: [3, 3] });
 
-    if (n.type === 'branch') {
-      cuboid3D(c, bs * 0.26, bs * 0.26, bs * 0.26 * zk, '#f4f2ec', '#4a5059').forEach(f => items.push(f));
+    if (n.type === 'branch' || n.type === 'djoint') {
+      cuboid3D(c, bs * 0.26, bs * 0.26, bs * 0.26 * zk, '#f4f2ec',
+        n.type === 'djoint' ? DUCT_KINDS.supply.colour : '#4a5059').forEach(f => items.push(f));
       if (V3.labels) labels.push({ at: { X: c.X, Y: c.Y, Z: c.Z + bs * 0.18 * zk },
         text: '', sub: fmt(z, 2) + ' m', small: true });
       return;
     }
     const cond = n.type === 'condenser';
     const bc = n.type === 'bc';
-    const fill = cond ? '#39404b' : (n.reached ? '#ffffff' : '#fdecea');
-    const stroke = cond ? '#191d26' : (n.reached ? (bc ? '#5a5d68' : (INDOOR_EDGE[n.unit] || '#4a9fd8')) : '#bb3b2e');
+    const fill = cond ? '#39404b' : (n.reached || n.type === 'controller' ? '#ffffff' : '#fdecea');
+    const stroke = cond ? '#191d26'
+      : n.type === 'outlet' ? (DUCT_KINDS[n.kind] || DUCT_KINDS.supply).colour
+      : n.type === 'controller' ? NODE_EDGE_EXTRA.controller
+      : (n.reached ? (bc ? '#5a5d68' : (INDOOR_EDGE[n.unit] || '#4a9fd8')) : '#bb3b2e');
     /* The real footprint and the real angle, the same two figures the plan
        draws — scaled up together, aspect kept, only when the unit would
        otherwise be too small to see against the extent of the job. The box's
@@ -3802,11 +4663,12 @@ function draw3D(target) {
 function legend3D() {
   const m = V3.model;
   if (!m) return;
-  const hs = S.nodes.filter(n => n.type !== 'branch').map(heightOf);
+  const hs = S.nodes.filter(n => n.type !== 'branch' && n.type !== 'djoint').map(heightOf);
   const lo = hs.length ? Math.min.apply(null, hs) : 0;
   const hi = hs.length ? Math.max.apply(null, hs) : 0;
   const risers = S.segs.filter(s => s.riseM > 0.02).length;
   const has3 = S.segs.some(s => s.pipes === 3);
+  const hasDuct = S.ducts.length > 0;
   const flags = [];
   S.nodes.filter(n => n.type === 'indoor' && heightOf(n) < 0)
     .forEach(n => flags.push(esc(n.name) + ' is below the floor'));
@@ -3819,6 +4681,7 @@ function legend3D() {
     + '<span class="sw" style="background:' + LINES.liquid.colour + '"></span>Liquid'
     + '<span class="sw" style="background:' + LINES.gas.colour + ';margin-left:8px"></span>Suction gas'
     + (has3 ? '<span class="sw" style="background:' + LINES.hpgas.colour + ';margin-left:8px"></span>HP gas' : '')
+    + (hasDuct ? '<span class="sw" style="background:' + DUCT_KINDS.supply.colour + ';margin-left:8px"></span>Duct' : '')
     + '</div>'
     + '<div class="ln" style="color:var(--ink-soft)">' + fmt(lo, 2) + ' m to ' + fmt(hi, 2) + ' m &middot; '
     + plural(risers, 'section') + ' with a rise &middot; grid ' + m.step + ' m</div>'
@@ -4288,6 +5151,10 @@ async function buildReport() {
   ${fig('Sections', String(t.sections))}
   ${fig('Indoor duty', fmt(t.kwIndoor, 1) + ' kW')}
   ${fig('Insulation', fmt(t.insulatedM, 1) + ' m')}
+  ${t.ducts ? fig('Ductwork', fmt(t.ductM, 1) + ' m') : ''}
+  ${t.ducts ? fig('Air moved', fmt(t.airLps, 0) + ' l/s') : ''}
+  ${t.outlets ? fig('Outlets', String(t.outlets)) : ''}
+  ${t.controllers ? fig('Controllers', String(t.controllers)) : ''}
 </div>
 <p class="lede">
   <b>Route, one direction</b> is the installed route measured once — the plan run plus every riser and
@@ -4344,6 +5211,60 @@ ${frontSrc ? '<figure><img src="' + frontSrc + '" alt="Elevation of the pipework
   + '<figcaption>Elevation, looking along the drawing &mdash; the height difference between the condenser '
   + 'and each indoor unit at a glance. <b>The vertical is stretched &times;' + ELEV_EX + '</b> so small '
   + 'height differences can be read; the plan directions are true.</figcaption></figure>' : ''}
+
+${(S.ductSystems || []).some(x => x.ducts.length) || t.controllers ? `
+<div class="pb"></div>
+<h2>Ductwork, outlets and control</h2>
+<p class="lede">Air volumes are the ducted unit's own, at the fan speed the ductwork is set out at.
+  Anything not pinned to a figure takes an even share of what is left, which is the first answer and
+  rarely the last one. Velocity follows from the duct size given against each section.</p>
+${(S.ductSystems || []).filter(x => x.ducts.length).map(x => '<section class="blk">'
+  + '<h3>' + esc(x.unit.name) + ' <span class="sysref">— ductwork</span></h3>'
+  + '<div class="figs">'
+  + fig('Air at ' + x.speed, fmt(x.total, 0) + ' l/s', true)
+  + fig('External resistance', x.pa ? fmt(x.pa, 0) + ' Pa' : '—')
+  + fig('Ductwork', fmt(x.lengthM, 1) + ' m')
+  + fig('Outlets', String(x.nOutlets))
+  + fig('Delivered', fmt(x.delivered, 0) + ' l/s')
+  + fig('Fastest duct', x.maxVel > 0 ? fmt(x.maxVel, 1) + ' m/s' : '—')
+  + '</div>'
+  + repTable([
+      { h: 'Section', cls: 'key' }, { h: 'Air' }, { h: 'From', cls: 'dim' }, { h: 'To', cls: 'dim' },
+      { h: 'Length m', n: true }, { h: 'Carries l/s', n: true, strong: true },
+      { h: 'Size mm', n: true, opt: true }, { h: 'Velocity m/s', n: true, opt: true },
+      { h: 'Off it l/s', n: true, opt: true }, { h: 'Outlets', n: true, opt: true },
+      { h: 'l/s per m', n: true, opt: true }, { h: 'Note', opt: true },
+    ], x.ducts.slice().sort((a, b) => String(a.ref).localeCompare(String(b.ref), 'en', { numeric: true }))
+      .map(d => {
+        const up = nodeById(d.up != null ? d.up : d.a), dn = nodeById(d.down != null ? d.down : d.b);
+        return [segName(d) + (d.sock ? ' (sock)' : ''),
+          DUCT_KINDS[d.kind || 'supply'].short,
+          up ? (up.name || nodeWord(up)) : '', dn ? (dn.name || nodeWord(dn)) : '',
+          fmt(d.lengthM, 2), fmt(d.flow, 0), ductSizeLabel(d),
+          d.vel > 0 ? fmt(d.vel, 2) : '', d.takeOff > 0 ? fmt(d.takeOff, 0) : '',
+          d.nOutlets ? String(d.nOutlets) : '', d.perMetre > 0 ? fmt(d.perMetre, 1) : '',
+          d.note || ''];
+      }), ['Total', '', '', '', fmt(x.lengthM, 2)])
+  + (x.outlets.length ? repTable([
+      { h: 'Outlet', cls: 'key' }, { h: 'Air' }, { h: 'Type or model', opt: true },
+      { h: 'Volume l/s', n: true, strong: true }, { h: 'Basis' },
+      { h: 'Height m', n: true }, { h: 'Room', opt: true },
+    ], x.outlets.slice().sort((a, b) => (b.flow || 0) - (a.flow || 0)).map(o =>
+      [o.name || '', DUCT_KINDS[o.kind || 'supply'].short, o.model || '',
+       fmt(o.flow || 0, 0), o.auto ? 'even share' : 'set', fmt(heightOf(o), 2), o.room || ''])) : '')
+  + '</section>').join('')}
+${t.controllers ? '<h3>Controllers</h3>' + repTable([
+    { h: 'Controller', cls: 'key' }, { h: 'Kind' }, { h: 'Model', opt: true },
+    { h: 'Height m', n: true }, { h: 'Units driven', n: true }, { h: 'Units', cls: 'dim' },
+    { h: 'Location', opt: true },
+  ], S.nodes.filter(n => n.type === 'controller')
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'en', { numeric: true }))
+    .map(c => {
+      const names = (c.serves || []).map(id => { const u = nodeById(id); return u ? u.name : ''; }).filter(Boolean);
+      return [c.name || '', CONTROLLER_KINDS[c.kind || 'local'].label, c.model || '',
+        fmt(heightOf(c), 2), String(names.length), names.join(', '), c.room || ''];
+    })) : ''}
+` : ''}
 
 <div class="pb"></div>
 <h2>Pipe sections and indoor units, by system</h2>
@@ -4669,6 +5590,14 @@ async function exportXlsx() {
     ['BC boxes', t.bc, ''],
     ['Branch joints', t.branches, ''],
     ['Indoor duty', N2(t.kwIndoor), 'kW'],
+    ['Insulated length', N2(t.insulatedM), 'm — every line over its whole length'],
+    [],
+    [HD('Air and control'), HD(''), HD('')],
+    ['Ductwork', N2(t.ductM), 'm'],
+    ['Air moved', N2(t.airLps), 'l/s — the ducted units at their design fan speeds'],
+    ['Duct sections', t.ducts, ''],
+    ['Outlets', t.outlets, ''],
+    ['Controllers', t.controllers, ''],
     [],
     [B('Line sizes are the manufacturer’s, selected against the model and these lengths.')],
     ['This take-off measures the route. It does not size refrigerant pipe.'],
@@ -4801,6 +5730,65 @@ async function exportXlsx() {
       st.nBranch, st.nBc, iss.length ? iss.join('  |  ') : 'ok']);
   });
 
+  /* ---- Ductwork ---- */
+  const duct = [[HD('Section'), HD('Unit'), HD('Air'), HD('From'), HD('To'), HD('Length m'),
+    HD('Carries l/s'), HD('Shape'), HD('Size mm'), HD('Free area m2'), HD('Velocity m/s'),
+    HD('Off this section l/s'), HD('Outlets'), HD('Per outlet l/s'), HD('Sock'),
+    HD('l/s per metre'), HD('Height m aff'), HD('Note')]];
+  (S.ductSystems || []).forEach(x => {
+    x.ducts.slice().sort((a, b) => String(a.ref).localeCompare(String(b.ref), 'en', { numeric: true }))
+      .forEach(d => {
+        const up = nodeById(d.up != null ? d.up : d.a);
+        const dn = nodeById(d.down != null ? d.down : d.b);
+        duct.push([segName(d), x.unit.name, DUCT_KINDS[d.kind || 'supply'].label,
+          up ? (up.name || nodeWord(up)) : '', dn ? (dn.name || nodeWord(dn)) : '',
+          N2(d.lengthM), NB(d.flow), DUCT_SHAPES[d.shape || 'circ'], ductSizeLabel(d),
+          d.area > 0 ? { v: Math.round(d.area * 10000) / 10000, s: 2 } : '',
+          d.vel > 0 ? N2(d.vel) : '',
+          d.takeOff > 0 ? N2(d.takeOff) : '', d.nOutlets || '',
+          d.perOutlet > 0 ? N2(d.perOutlet) : '', d.sock ? 'yes' : '',
+          d.perMetre > 0 ? N2(d.perMetre) : '',
+          N2(vertexH(d, 0)), d.note || '']);
+      });
+  });
+  S.ducts.filter(d => d.orphan).forEach(d =>
+    duct.push([segName(d), 'not on a unit', DUCT_KINDS[d.kind || 'supply'].label, '', '',
+      N2(d.lengthM), '', DUCT_SHAPES[d.shape || 'circ'], ductSizeLabel(d)]));
+  if (S.ducts.length) duct.push([B('Total'), '', '', '', '', NB(t.ductM)]);
+
+  /* ---- Outlets ---- */
+  const outl = [[HD('Outlet'), HD('Unit'), HD('Air'), HD('Type or model'), HD('Volume l/s'),
+    HD('Set or even share'), HD('Height m aff'), HD('Room'), HD('Ducted')]];
+  S.nodes.filter(n => n.type === 'outlet')
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'en', { numeric: true }))
+    .forEach(o => {
+      const u = o.unitId ? nodeById(o.unitId) : null;
+      outl.push([o.name || '', u ? u.name : '', DUCT_KINDS[o.kind || 'supply'].label,
+        o.model || '', NB(o.flow || 0), o.auto ? 'even share' : 'set',
+        N2(heightOf(o)), o.room || '', o.reached ? 'yes' : 'NO']);
+    });
+  /* Outlets set out as a count on a length of duct rather than placed one by
+     one still have to appear, or the air does not add up on paper. */
+  S.ducts.filter(d => (d.nOutlets || 0) > 0).forEach(d => {
+    const u = d.unitId ? nodeById(d.unitId) : null;
+    outl.push([segName(d) + (d.sock ? ' (sock)' : ' (' + d.nOutlets + ' on the section)'),
+      u ? u.name : '', DUCT_KINDS[d.kind || 'supply'].label, '',
+      NB(d.takeOff), (parseFloat(d.outletLps) || 0) > 0 ? 'set' : 'even share',
+      N2(vertexH(d, 0)), '', 'yes']);
+  });
+
+  /* ---- Controllers ---- */
+  const ctls = [[HD('Controller'), HD('Kind'), HD('Model'), HD('Height m aff'),
+    HD('Units driven'), HD('Units'), HD('Location')]];
+  S.nodes.filter(n => n.type === 'controller')
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'en', { numeric: true }))
+    .forEach(c => {
+      const names = (c.serves || []).map(id => { const u = nodeById(id); return u ? u.name : ''; })
+        .filter(Boolean);
+      ctls.push([c.name || '', CONTROLLER_KINDS[c.kind || 'local'].label, c.model || '',
+        N2(heightOf(c)), names.length, names.join(', '), c.room || '']);
+    });
+
   /* ---- Check ---- */
   const a = auditTake();
   const chk = [[HD('Severity'), HD('What')]];
@@ -4811,6 +5799,10 @@ async function exportXlsx() {
   /* ---- the two pictures, the same ones the PDF report carries ---- */
   const sheets = [
     { name: 'Summary', rows: sum, widths: [30, 22, 60] },
+    { name: 'Ductwork', rows: duct,
+      widths: [12, 14, 10, 14, 14, 11, 12, 13, 12, 13, 12, 18, 9, 14, 8, 13, 12, 30] },
+    { name: 'Outlets', rows: outl, widths: [26, 14, 10, 24, 11, 16, 12, 20, 9] },
+    { name: 'Controllers', rows: ctls, widths: [14, 22, 18, 12, 12, 44, 26] },
     { name: 'Pipe sections', rows: pipe,
       widths: [12, 16, 16, 16, 7, 9, 9, 11, 10, 12, 12, 10, 12, 11, 12, 10, 12, 12, 13, 12, 8, 34] },
     { name: 'Materials', rows: mat, widths: [22, 12, 10, 12, 10] },
@@ -4838,7 +5830,14 @@ async function exportXlsx() {
       '3D plan — risers and drops in three dimensions, heights above finished floor');
   } catch (e) {}
 
-  const bytes = buildWorkbook(sheets);
+  /* An air-conditioning take-off with no ductwork on it should not carry
+     three empty sheets about, so they are dropped when there is nothing on
+     them. */
+  const drop = [];
+  if (!S.ducts.length) drop.push('Ductwork');
+  if (outl.length < 2) drop.push('Outlets');
+  if (ctls.length < 2) drop.push('Controllers');
+  const bytes = buildWorkbook(sheets.filter(x => drop.indexOf(x.name) < 0));
   downloadBlob(safeName(S.ref) + ' — AC Trace — ' + S.date + '.xlsx', bytes,
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   toast('Excel report saved to your downloads');
@@ -5109,7 +6108,7 @@ function projectBundle(withImg) {
     ref: S.ref, client: S.client, engineer: S.engineer, date: S.date,
     refrigerant: S.refrigerant,
     img: withImg ? S.img : null, pxPerM: S.pxPerM, calib: S.calib, rotation: S.rotation,
-    nodes: S.nodes, segs: S.segs, nextId: S.nextId, settings: S.settings,
+    nodes: S.nodes, segs: S.segs, ducts: S.ducts, nextId: S.nextId, settings: S.settings,
   }));
   // everything solve() works out comes back from the geometry, so none of it
   // is written to the file
@@ -5117,13 +6116,16 @@ function projectBundle(withImg) {
   out.segs.forEach(s => ['up', 'down', 'parentSeg', 'depth', 'orphan', 'sysId', 'afterBc',
     'kw', 'nIndoor', 'routeM', 'rise', 'riseM', 'lengthM', 'pipes', 'pipeM', 'role']
     .forEach(k => delete s[k]));
+  (out.ducts || []).forEach(d => ['up', 'down', 'orphan', 'unitId', 'lengthM', 'routeM', 'riseM',
+    'flow', 'takeOff', 'vel', 'area', 'nOutlets', 'perOutlet', 'perMetre']
+    .forEach(k => delete d[k]));
   return out;
 }
 
 function autosave() {
   clearTimeout(autoTimer);
   autoTimer = setTimeout(() => {
-    if (!S.img && !S.segs.length && !S.nodes.length) return;
+    if (!S.img && !S.segs.length && !S.nodes.length && !S.ducts.length) return;
     try {
       localStorage.setItem(AUTO_KEY, JSON.stringify({
         at: Date.now(), ref: S.ref, project: projectBundle(false) }));
@@ -5225,8 +6227,9 @@ function loadProject(data) {
   S.refrigerant = data.refrigerant || S.refrigerant;
   S.pxPerM = data.pxPerM || 0; S.calib = data.calib || null;
   S.rotation = data.rotation || 0;
-  S.nodes = data.nodes || []; S.segs = data.segs || [];
-  S.nextId = data.nextId || (Math.max(0, ...S.nodes.map(n => n.id), ...S.segs.map(s => s.id)) + 1);
+  S.nodes = data.nodes || []; S.segs = data.segs || []; S.ducts = data.ducts || [];
+  S.nextId = data.nextId || (Math.max(0, ...S.nodes.map(n => n.id), ...S.segs.map(s => s.id),
+    ...S.ducts.map(d => d.id)) + 1);
   if (data.settings) Object.assign(S.settings, data.settings);
   traceHeight = S.settings.pipeHeight;
   armedIndoor = S.settings.defaultIndoor || 'cass600';
@@ -5370,6 +6373,16 @@ function stepsDialog() {
         + '<b>click anywhere on a unit and the pipe connects at that point</b>, which is what you want '
         + 'when the stubs come out of one end of the casing. Zoom right in to place it accurately — '
         + 'click near the middle and it snaps to the centre as before.')
+    + step(S.ducts.length > 0, 'Ductwork off a ducted unit', 'Put the unit’s air volumes and '
+        + 'resistances in on its inspector — low, medium and high — and tick the speed the ductwork is '
+        + 'set out at. Then <b>Duct</b> traces the run and <b>Outlet</b> places the diffusers. The '
+        + 'unit’s volume is shared evenly between everything taking air off; type a figure against one '
+        + 'and the rest re-share what is left. A section can carry a count of outlets instead of '
+        + 'placing each one, and ticking <b>Ventilated sock</b> spreads the air evenly along the whole '
+        + 'length and reports it per metre. Give a section a size and the velocity comes with it.')
+    + step(S.nodes.some(n => n.type === 'controller'), 'Controllers', '<b>Control</b> places one '
+        + 'wherever it goes — one for the lot, or several in different rooms. Tick the units each one '
+        + 'drives; selecting it draws a dashed leader to every one of them.')
     + step(false, 'Put the line sizes in', 'Schedule → <b>Line sizes</b>. Tick the sections a selection '
         + 'covers — or a whole system at once — pick the liquid, gas and HP gas sizes and apply them to '
         + 'the lot. Sizes are the imperial steps refrigerant pipe is actually bought in, 1/4" to 1 5/8". '
@@ -5385,6 +6398,7 @@ function stepsDialog() {
     + '<h4>Keys</h4>'
     + '<table class="mini"><tbody>'
     + '<tr><td class="mono">V H S C I B T J</td><td>select, pan, scale, condenser, indoor, BC box, trace, joint</td></tr>'
+    + '<tr><td class="mono">D O K</td><td>duct, outlet, controller</td></tr>'
     + '<tr><td class="mono">Alt</td><td>held: flip the corner lock, or cut a joint exactly where the cursor is</td></tr>'
     + '<tr><td class="mono">Shift</td><td>held while dragging a handle: keep a unit’s shape, or snap its angle to 15°</td></tr>'
     + '<tr><td class="mono">O</td><td>square up on or off</td></tr>'
@@ -5435,6 +6449,8 @@ sc.addEventListener('pointerdown', ev => {
     }
     const h = hitSeg(p);
     if (h) { select('seg', h.seg.id); return; }
+    const hd = hitSeg(p, 14, 'duct');
+    if (hd) { select('duct', hd.seg.id); return; }
     sel = null; closeInspector();
     return;
   }
@@ -5464,6 +6480,38 @@ sc.addEventListener('pointerdown', ev => {
   if (tool === 'condenser') { addCondenser(p); return; }
   if (tool === 'indoor')    { addIndoor(p);    return; }
   if (tool === 'bc')        { addBc(p);        return; }
+  if (tool === 'outlet')    { addOutlet(p);    return; }
+  if (tool === 'ctl')       { addController(p); return; }
+
+  if (tool === 'duct') {
+    if (!draft) {
+      const sn = snapAt(p, null, 'duct');
+      const c = connectAt(sn);
+      if (!c) { toast('Start on a ducted unit, a duct joint or a corner'); return; }
+      draft = { kind: 'duct', startNode: c.node.id, startOff: c.off,
+                pts: [{ x: c.at.x, y: c.at.y, h: ductTraceHeight() }] };
+      render();
+      return;
+    }
+    const sn = snapAt(p, null, 'duct');
+    if (sn) {
+      if (sn.kind === 'node' && sn.node.id === draft.startNode) {
+        toast('That is where this duct started'); return;
+      }
+      const c = connectAt(sn);
+      if (c) {
+        if (c.node.id === draft.startNode) { toast('That is where this duct started'); return; }
+        draft.pts.push({ x: c.at.x, y: c.at.y, h: ductTraceHeight() });
+        finishDuct(c.node.id, c.off);
+        return;
+      }
+    }
+    const prev = draft.pts[draft.pts.length - 1];
+    const q = orthoPoint(prev, p);
+    draft.pts.push({ x: q.x, y: q.y, h: ductTraceHeight() });
+    render();
+    return;
+  }
 
   if (tool === 'trace') {
     if (!draft) {
@@ -5547,7 +6595,8 @@ sc.addEventListener('pointermove', ev => {
     }
     return;
   }
-  if (draft || tool === 'trace' || tool === 'joint' || PLACE_TOOLS.indexOf(tool) >= 0) {
+  if (draft || tool === 'trace' || tool === 'duct' || tool === 'joint'
+      || PLACE_TOOLS.indexOf(tool) >= 0) {
     setOverride(ev.altKey);
     hoverPt = toDwg(ev); render();
     return;
@@ -5574,7 +6623,9 @@ sc.addEventListener('dblclick', ev => {
   const n = hitNode(p);
   if (n) { select('node', n.id); return; }
   const h = hitSeg(p);
-  if (h) select('seg', h.seg.id);
+  if (h) { select('seg', h.seg.id); return; }
+  const hd = hitSeg(p, 14, 'duct');
+  if (hd) select('duct', hd.seg.id);
 });
 
 sc.addEventListener('wheel', ev => {
@@ -5742,6 +6793,14 @@ document.addEventListener('keydown', ev => {
     if (draft) { draft = null; render(); return; }
     if (el('drawer').classList.contains('on')) { el('drawer').classList.remove('on'); return; }
     setTool('select'); return;
+  }
+  if (ev.key === 'Enter' && draft && draft.kind === 'duct') {
+    if (draft.pts.length < 2) { draft = null; render(); return; }
+    const last = draft.pts[draft.pts.length - 1];
+    const j = { id: nid(), type: 'djoint', x: last.x, y: last.y, height: ductTraceHeight() };
+    S.nodes.push(j);
+    finishDuct(j.id);
+    return;
   }
   if (ev.key === 'Enter' && draft && draft.kind === 'trace') {
     /* A run that stops in mid-air is still a run — the last point becomes a

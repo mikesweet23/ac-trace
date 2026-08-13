@@ -16,7 +16,7 @@ this should be enough to make a safe change. Keep it current.
 |---|---|
 | File | `index.html` |
 | URL | the repo root |
-| Does | Refrigerant pipework take-off from a scaled layout: place the condensers and indoor units, trace the routes, set a height at every point, name every section, report the lengths |
+| Does | Refrigerant pipework take-off from a scaled layout: place the condensers and indoor units, trace the routes, set a height at every point, name every section, report the lengths. Ductwork, outlets and controllers off the same sheet |
 | Repo | `github.com/mikesweet23/ac-trace` |
 
 **It does not size refrigerant pipe, and it must never look as though it
@@ -100,6 +100,42 @@ condenser **as far as the BC box** and 2 pipes from the box on to the unit it
 serves. `buildTree()` sets `sg.afterBc` walking out from the condenser, and
 that flag is the whole switch. A section can override it, and the override is
 in the file, so a genuine oddity survives a reload.
+
+### The air is a second network, kept apart from the first
+
+A ducted unit moves air as well as refrigerant, so it is the root of a second
+tree: `S.ducts`, its own runs, its own naming (`D` mains from the unit, `E`
+branches), its own joints (`djoint`, never `branch`), its own schedule tab and
+its own sheets. `inNet()` is what keeps them apart — pipework will not snap to
+a diffuser and ductwork will not snap to a BC box — and `runsOf(net)` picks
+which array a tool is working in. Mixing the two would put a duct in the
+refrigerant schedule, which is the one thing that must never happen.
+
+**The unit's own volume is what there is to share.** `designFlow()` is the
+ticked fan speed's l/s off `n.fan`, straight from the manufacturer's data.
+`solveDucts()` takes off everything pinned to a figure first, then divides
+what is left evenly between everything set to share — an outlet with `lps` 0,
+a section with `outletLps` 0, or a sock. Pin one and the rest re-share; that
+is the whole model and it is why the first answer is always even.
+
+Three ways to take air off, because a real drawing has all three: an outlet
+node placed where the diffuser is; a count of outlets on a section with a
+total against it; and a section marked `sock`, which spreads its take-off
+evenly over its own length and reports l/s per metre. All three are counted
+in `totals().outlets` and all three appear on the Outlets sheet, or the air
+does not add up on paper.
+
+**Velocity comes from the size, and only from the size.** `ductArea()` turns
+a Ø or a W×H into m², and the velocity is the section's carried flow over it.
+`suggestDia()` goes the other way for convenience, but it only suggests:
+sizing ductwork is a different job and a different tool.
+
+### Controllers are located, not connected
+
+A controller is on neither network. It carries a name, a kind, a model, a
+height and `serves`, a list of indoor unit ids. Its leaders are drawn **only
+while it is selected**, because drawing every controller's links at once
+buries the pipework under them.
 
 ### The three colours
 
@@ -348,14 +384,19 @@ Five minutes, and it exercises everything:
 8. **3D view.** Confirm every unit sits at the height it was given, that the
    height staff reads off, that a 3-pipe run shows three lines, and that the
    unit you resized and turned stands the same way there as on the plan.
-9. **Line sizes.** Open the schedule, tick every section, set a liquid, a gas
+9. **Ductwork.** Put low/medium/high l/s and Pa on a ducted unit, tick a
+   speed, then trace a duct from it to three outlets. Confirm the volume is
+   shared three ways, that pinning one outlet re-shares the other two, that a
+   size gives a velocity, and that ticking *Ventilated sock* reports l/s per
+   metre. Place a controller and tick a unit against it.
+10. **Line sizes.** Open the schedule, tick every section, set a liquid, a gas
    and an HP gas size and apply them. Confirm the HP gas is skipped on the
    2-pipe sections and named in the toast, and that the inspector shows the
    same sizes as the drawer for whichever section is selected.
-10. **Save**, reload the page, **Open** the file. Every section name, length,
-   point height, footprint, angle, connection point and line size must come
-   back identical.
-11. **PDF report** — the layout plan and both 3D pictures must be there, in
+11. **Save**, reload the page, **Open** the file. Every section name, length,
+   point height, footprint, angle, connection point, line size, duct size,
+   air volume and controller must come back identical.
+12. **PDF report** — the layout plan and both 3D pictures must be there, in
    colour, with the section labels legible. **Excel** — open it and confirm
    seven sheets, that *Pipe sections* totals match the schedule drawer, and
    that the two picture sheets carry their pictures.
@@ -393,6 +434,9 @@ Replace when better figures arrive; none of them changes a length.
 | Connected-ratio flag | over 130% is called out. Real limits are per range and per refrigerant |
 | Twin/triple leg tolerance | 20% between the legs past the tee |
 | Pipe separation on the plan and in 3D | drawn wider than true so three pipes read as three pipes. True separation is one line on screen |
+| Duct velocity the size helper aims at | 4.0 m/s, and a warning past 8 m/s. Both are conventions, not limits — the job decides |
+| Round duct sizes offered | 100 to 800 mm in the standard steps. Rectangular is whatever W×H is typed |
+| Fan speeds | Low, medium and high, each l/s and Pa, all typed in from the unit's data. Nothing here works an airflow out |
 | Insulation | 1/2" wall by default, 3/8" the thinner option, per section. Insulated length is the pipe metres, because every line is insulated over its whole length |
 | Line size list | 1/4 to 1 5/8 inch in the nine steps refrigerant pipe is actually bought in. Sizes are picked from that list, never typed, because a typed figure is one nobody can order |
 
