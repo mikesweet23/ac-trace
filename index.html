@@ -1036,9 +1036,15 @@ const S = {
 };
 const nid = () => S.nextId++;
 
-/* The height the next traced section will sit at. Changed from the hint bar
+/* The height the next traced point will sit at, one per network: ductwork
+   usually runs above the refrigerant pipe, and switching tools should not
+   throw away the height set for the other one. Changed from the hint bar
    mid-trace, which is how a run gets a riser without leaving the trace. */
 let traceHeight = S.settings.pipeHeight;
+let ductHeight = S.settings.ductHeight;
+function drawingDuct() { return tool === 'duct' || !!(draft && draft.kind === 'duct'); }
+function activeHeight() { return drawingDuct() ? ductHeight : traceHeight; }
+function setActiveHeight(v) { if (drawingDuct()) ductHeight = v; else traceHeight = v; }
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return String(s == null ? '' : s)
@@ -1921,8 +1927,8 @@ function render() {
     g.appendChild(mk('path', { d: pathOf(pts), fill: 'none', stroke: 'var(--measure)',
       'stroke-width': 2.4 * k, 'stroke-dasharray': (8 * k) + ' ' + (5 * k), 'stroke-linecap': 'round' }));
     pts.forEach((p, i) => {
-      const h = p.h !== undefined ? p.h : traceHeight;
-      const prev = i > 0 ? (pts[i - 1].h !== undefined ? pts[i - 1].h : traceHeight) : h;
+      const h = p.h !== undefined ? p.h : activeHeight();
+      const prev = i > 0 ? (pts[i - 1].h !== undefined ? pts[i - 1].h : activeHeight()) : h;
       const step = i > 0 && Math.abs(h - prev) > 0.005;
       g.appendChild(mk('circle', { cx: p.x, cy: p.y, r: (step ? 4.4 : 3.2) * k,
         fill: i === pts.length - 1 ? 'var(--measure)' : (step ? 'var(--measure)' : 'var(--white)'),
@@ -1947,7 +1953,7 @@ function render() {
     }
     if (S.pxPerM > 0 && hoverPt) {
       const run = polyLenPx(pts) / S.pxPerM;
-      const lbl = fmt(run, 2) + ' m  @ ' + fmt(traceHeight, 2) + ' m';
+      const lbl = fmt(run, 2) + ' m  @ ' + fmt(activeHeight(), 2) + ' m';
       g.appendChild(mk('rect', { x: hoverPt.x + 12 * k, y: hoverPt.y - 22 * k,
         width: (lbl.length * 6.6 + 14) * k, height: 18 * k, rx: 2 * k, fill: 'var(--measure)' }));
       g.appendChild(mk('text', { x: hoverPt.x + 19 * k, y: hoverPt.y - 9 * k,
@@ -2558,7 +2564,7 @@ function setTool(t) {
   else h.classList.remove('on');
   h.classList.toggle('trace', t === 'trace' || t === 'duct');
   el('orthoChk').checked = !!S.settings.ortho;
-  el('hgtIn').value = fmt(traceHeight, 2);
+  el('hgtIn').value = fmt(activeHeight(), 2);
   const pal = ['indoor', 'bc', 'condenser', 'outlet', 'duct', 'ctl'].indexOf(t) >= 0;
   el('vpal').classList.toggle('on', pal);
   if (pal) buildPalette();
@@ -2954,10 +2960,10 @@ function orthoPoint(prev, p) {
 
 function previewPoint(p) {
   const sn = snapAt(p, draft ? draft.startNode : null, draft && draft.kind === 'duct' ? 'duct' : 'pipe');
-  if (sn) return { x: sn.at.x, y: sn.at.y, h: traceHeight };
+  if (sn) return { x: sn.at.x, y: sn.at.y, h: activeHeight() };
   const prev = draft && draft.pts.length ? draft.pts[draft.pts.length - 1] : null;
   const q = orthoPoint(prev, p);
-  q.h = traceHeight;
+  q.h = activeHeight();
   return q;
 }
 
@@ -2974,7 +2980,7 @@ function dedupePts(pts) {
 function stubPx() { return clamp(S.pxPerM > 0 ? S.pxPerM * 0.4 : 8, 4, 30); }
 /* Ductwork is traced at its own height, which starts above the pipe run
    because that is usually where it sits, and is changed the same way. */
-function ductTraceHeight() { return traceHeight; }
+function ductTraceHeight() { return ductHeight; }
 
 function finishTrace(endNode, endOff) {
   if (!draft || draft.pts.length < 2) { draft = null; render(); return; }
@@ -3444,6 +3450,30 @@ function ductForm(d) {
     + 'The whole length is the outlet — the air is spread evenly along it and reported per metre.'
     + '</span></span></label></div>';
 
+  /* The same point-by-point list the pipework has. A duct lifts over a beam
+     and drops into a ceiling void exactly as a pipe does, and without this
+     the only chance to set a height was while tracing — get it wrong and the
+     run had to be drawn again. */
+  html += '<div class="fld"><span>Height of each point <em>metres above finished floor</em></span>'
+    + '<div class="hpts">'
+    + d.pts.map((p2, i) => {
+        const prev = i > 0 ? hs[i - 1] : null;
+        const diff = prev === null ? '' : (hs[i] - prev);
+        const riseTxt = prev === null ? (up ? 'from ' + esc(up.name || nodeWord(up)) : '')
+          : (Math.abs(diff) < 0.005 ? 'level' : (diff > 0 ? '↑ ' : '↓ ') + fmt(Math.abs(diff), 2) + ' m');
+        return '<div class="hpt"><span class="ix">' + (i + 1) + '</span>'
+          + '<input type="number" step="0.05" data-dhp="' + i + '" value="' + fmt(hs[i], 2) + '">'
+          + '<span class="rise">' + riseTxt + '</span>'
+          + (i > 0 && i < d.pts.length - 1
+              ? '<button data-dhpdel="' + i + '" title="Remove this corner">&times;</button>'
+              : '<span></span>')
+          + '</div>';
+      }).join('')
+    + '</div>'
+    + '<div style="display:flex;gap:8px;margin-top:6px">'
+    + '<button class="btn ghost sm" id="fDLevel">Level the whole run</button>'
+    + '<button class="btn ghost sm" id="fDSetAll">Set all to…</button></div></div>';
+
   html += '<label class="fld"><span>Note</span><textarea id="fDNote">' + esc(d.note || '') + '</textarea></label>';
 
   const rows = [
@@ -3757,6 +3787,48 @@ function wireInspector() {
       d.sock = e.target.checked;
       if (d.sock && !(parseInt(d.outlets, 10) > 0)) d.outlets = 1;
       redo();
+    });
+
+    el('insBody').querySelectorAll('[data-dhp]').forEach(inp =>
+      inp.addEventListener('change', () => {
+        const i = parseInt(inp.dataset.dhp, 10);
+        const v = parseFloat(inp.value);
+        if (isNaN(v)) return;
+        pushUndo('change a duct height');
+        d.pts[i].h = v;
+        redo();
+      }));
+    el('insBody').querySelectorAll('[data-dhpdel]').forEach(bt =>
+      bt.addEventListener('click', () => {
+        const i = parseInt(bt.dataset.dhpdel, 10);
+        if (d.pts.length <= 2) { toast('A duct needs both its ends'); return; }
+        pushUndo('remove a corner');
+        d.pts.splice(i, 1);
+        redo();
+      }));
+    on('fDLevel', 'click', () => {
+      pushUndo('level the duct');
+      const h0 = vertexH(d, 0);
+      d.pts.forEach(p2 => { p2.h = h0; });
+      redo();
+      toast('Every point on ' + segName(d) + ' set to ' + fmt(h0, 2) + ' m');
+    });
+    on('fDSetAll', 'click', () => {
+      modal('Set every point on ' + segName(d),
+          '<label class="fld"><span>Height above finished floor <em>metres</em></span>'
+        + '<input type="number" id="daH" step="0.05" value="' + fmt(vertexH(d, 0), 2) + '" autofocus></label>'
+        + '<div style="display:flex;gap:8px;margin-top:12px">'
+        + '<button class="btn go" id="daOk">Set</button>'
+        + '<button class="btn ghost" id="daNo">Cancel</button></div>');
+      el('daOk').addEventListener('click', () => {
+        const v = parseFloat(el('daH').value);
+        if (isNaN(v)) { toast('Enter a height'); return; }
+        pushUndo('set the duct height');
+        d.pts.forEach(p2 => { p2.h = v; });
+        d.height = v;
+        closeModal(true); redo();
+      });
+      el('daNo').addEventListener('click', () => closeModal(true));
     });
   }
 
@@ -6274,6 +6346,7 @@ function loadProject(data) {
     ...S.ducts.map(d => d.id)) + 1);
   if (data.settings) Object.assign(S.settings, data.settings);
   traceHeight = S.settings.pipeHeight;
+  ductHeight = S.settings.ductHeight || 3.4;
   armedIndoor = S.settings.defaultIndoor || 'cass600';
   armedSystem = S.settings.defaultSystem || 'vrf2';
   undoStack.length = 0; refreshUndoBtn();
@@ -6313,6 +6386,8 @@ function projectDialog() {
     + '<div class="row2">'
     + '<label class="fld"><span>Indoor unit</span><input type="number" id="pHi" step="0.05" value="' + s.indoorHeight + '"></label>'
     + '<label class="fld"><span>BC box</span><input type="number" id="pHb" step="0.05" value="' + s.bcHeight + '"></label></div>'
+    + '<label class="fld"><span>Ductwork <em>ducts usually run above the pipe</em></span>'
+    + '<input type="number" id="pHd" step="0.05" value="' + (s.ductHeight || 3.4) + '"></label>'
     + '<div class="note">These are only the starting figures. Every unit, and every point along every '
     + 'run, carries its own height and can be changed from the inspector.</div>'
     + '<label class="fld"><span>Default indoor duty <em>kW, on a new unit</em></span>'
@@ -6353,6 +6428,7 @@ function projectDialog() {
     s.pipeHeight = parseFloat(el('pHp').value) || 0;
     s.indoorHeight = parseFloat(el('pHi').value) || 0;
     s.bcHeight = parseFloat(el('pHb').value) || 0;
+    s.ductHeight = parseFloat(el('pHd').value) || 0;
     s.defaultKw = parseFloat(el('pKw').value) || 0;
     s.insulation = el('pIns').value;
     s.ortho = el('pOrtho').checked;
@@ -6363,7 +6439,8 @@ function projectDialog() {
     s.showTypes = el('pTShow').checked;
     S.setupDone = true;
     traceHeight = s.pipeHeight;
-    el('hgtIn').value = fmt(traceHeight, 2);
+    ductHeight = s.ductHeight;
+    el('hgtIn').value = fmt(activeHeight(), 2);
     closeModal(true);
     if (s.autoName) autoNameSections(true);
     render();
@@ -6785,7 +6862,7 @@ el('hintFin').addEventListener('click', () => { finishDraftInPlace(); });
 el('orthoChk').addEventListener('change', e => { S.settings.ortho = e.target.checked; render(); });
 el('hgtIn').addEventListener('input', e => {
   const v = parseFloat(e.target.value);
-  if (!isNaN(v)) { traceHeight = v; render(); }
+  if (!isNaN(v)) { setActiveHeight(v); render(); }
 });
 el('hgtIn').addEventListener('wheel', () => el('hgtIn').blur(), { passive: true });
 el('vpalDone').addEventListener('click', () => setTool('select'));
@@ -6906,9 +6983,9 @@ document.addEventListener('keydown', ev => {
     render(); return;
   }
   if (k === '[' || k === ']') {
-    traceHeight = Math.round((traceHeight + (k === ']' ? 0.1 : -0.1)) * 100) / 100;
-    el('hgtIn').value = fmt(traceHeight, 2);
-    toast('Next section at ' + fmt(traceHeight, 2) + ' m');
+    setActiveHeight(Math.round((activeHeight() + (k === ']' ? 0.1 : -0.1)) * 100) / 100);
+    el('hgtIn').value = fmt(activeHeight(), 2);
+    toast((drawingDuct() ? 'Next duct' : 'Next section') + ' at ' + fmt(activeHeight(), 2) + ' m');
     render(); return;
   }
   const t = TOOLS.find(x => x.key.toLowerCase() === k);
@@ -6925,7 +7002,7 @@ el('modal').addEventListener('click', ev => { if (ev.target === el('modal')) clo
 (function init() {
   buildRail();
   refreshUndoBtn();
-  el('hgtIn').value = fmt(traceHeight, 2);
+  el('hgtIn').value = fmt(activeHeight(), 2);
   applyZoom();
   if (!offerAutosave()) {
     setTimeout(() => { if (!S.img) stepsDialog(); }, 400);

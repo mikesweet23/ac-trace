@@ -65,10 +65,17 @@ pipe and real height difference against a manufacturer's limit. So
 `sg.pts[i].h` is the height of point *i*, falling back to `sg.height` and then
 `S.settings.pipeHeight`. `vertexH()` is the only place that resolves it.
 
-While tracing, `traceHeight` is what the next point gets — changed from the
-box in the hint bar or with `[` and `]`. Change it before a click and that
-click starts a riser. That is the intended way to build a route, and the
-inspector's point-by-point list is for correcting it afterwards.
+While tracing, the next point gets `traceHeight` — or `ductHeight`, because
+the two networks keep their own: ductwork usually runs above the pipe, and
+switching tools must not throw away the height set for the other one.
+`activeHeight()` is which of the two the armed tool is drawing at, and the
+one box in the hint bar edits it. Change it before a click and that click
+starts a riser.
+
+**Both networks get the same point-by-point list in the inspector**, with
+*Level the whole run* and *Set all to…*. Ductwork went out without it once,
+and the only chance to set a height was while tracing — get it wrong and the
+run had to be drawn again.
 
 ### The system type is the whole point
 
@@ -430,7 +437,7 @@ Replace when better figures arrive; none of them changes a length.
 |---|---|
 | Indoor unit footprints | Wall 1.05 × 0.24, 900 cassette 0.95 × 0.95, 600 cassette 0.62 × 0.62, ducted 1.40 × 0.70, 1-way underslung 1.20 × 0.50 m. Representative, not any one manufacturer's — and only a starting size, because every unit can be dragged or typed to the size it really is |
 | Casing depth, 3D only (`t`) | Condenser 1.30, ducted 0.35, wall and 900 cassette 0.30, BC controller 0.30, 600 cassette 0.26, 1-way underslung 0.25, single BC box 0.22 m. Nominal: nothing here is told how deep a real unit is, and no length depends on it |
-| Default heights | condenser 0.30, pipe run 3.20, indoor 2.70, BC box 2.90 m above finished floor |
+| Default heights | condenser 0.30, pipe run 3.20, ductwork 3.40, indoor 2.70, BC box 2.90 m above finished floor |
 | Connected-ratio flag | over 130% is called out. Real limits are per range and per refrigerant |
 | Twin/triple leg tolerance | 20% between the legs past the tee |
 | Pipe separation on the plan and in 3D | drawn wider than true so three pipes read as three pipes. True separation is one line on screen |
