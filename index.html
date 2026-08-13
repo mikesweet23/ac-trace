@@ -256,6 +256,14 @@
     font-family: 'Azeret Mono', monospace; font-size: 10.5px; background: #3b424e;
     padding: 2px 6px; border-radius: 3px; color: #dfe4ea;
   }
+  /* Only while a run is actually in progress — it has nothing to end otherwise */
+  .hint .hfin {
+    display: none; background: var(--measure); color: #fff; border: none;
+    border-radius: 3px; padding: 5px 12px; font-weight: 700; font-size: 12px; white-space: nowrap;
+  }
+  .hint .hfin:hover { background: #8290ea; }
+  .hint.drawing .hfin { display: inline-block; }
+  .hint.alt .hfin { background: rgba(0,0,0,.25); }
   .hint .x { background: none; border: none; color: #98a0ad; font-size: 15px; padding: 0 2px; }
   .hint .x:hover { color: #fff; }
   .hint .hopt { display: none; align-items: center; gap: 6px; font-size: 11.5px; color: #cdd3dc; white-space: nowrap; }
@@ -302,7 +310,18 @@
     font-family: 'Azeret Mono', monospace; font-size: 9px;
     letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
   }
-  .vpal-bd { overflow-y: auto; padding: 5px 6px 8px; flex: 1; min-height: 0; }
+  /* Sized to its contents, never stretched. `flex: 1` made a two-item palette
+     a full-height panel over the left of the drawing, and every click
+     underneath it went to the panel instead of the sheet — which reads as
+     "the tool does nothing". */
+  .vpal-bd { overflow-y: auto; padding: 5px 6px 8px; flex: 0 1 auto; min-height: 0; }
+  .vpal.min .vpal-bd, .vpal.min .vpal-ft { display: none; }
+  .vpal-hd { position: relative; }
+  .vpal-hd .roll {
+    position: absolute; right: 8px; top: 7px; border: none; background: transparent;
+    color: var(--muted); font-size: 15px; line-height: 1; padding: 2px 4px; border-radius: 3px;
+  }
+  .vpal-hd .roll:hover { background: var(--paper-2); color: var(--ink); }
   .vgrp {
     font-family: 'Azeret Mono', monospace; font-size: 8.5px; letter-spacing: .13em;
     text-transform: uppercase; color: var(--muted); margin: 10px 5px 4px;
@@ -644,6 +663,7 @@
         <span class="hgt hopt" title="The height the next section is traced at. Change it before clicking the next point and that point starts a riser.">
           Height <input type="number" id="hgtIn" step="0.1"> m
         </span>
+        <button class="hfin" id="hintFin" title="End the run here (or double-click, or press Enter)">Finish</button>
         <button class="x" id="hintX" title="Cancel">&times;</button>
       </div>
 
@@ -651,6 +671,7 @@
         <div class="vpal-hd">
           <b id="vpalTitle">Indoor units</b>
           <span id="vpalSub">click the plan to place</span>
+          <button class="roll" id="vpalRoll" title="Roll the panel up, to get at the drawing under it">&minus;</button>
         </div>
         <div class="vpal-bd" id="vpalBody"></div>
         <div class="vpal-ft">
@@ -1965,6 +1986,9 @@ function render() {
 
   ov.innerHTML = '';
   ov.appendChild(g);
+  const hb = el('hint');
+  if (hb) hb.classList.toggle('drawing',
+    !!(draft && (draft.kind === 'trace' || draft.kind === 'duct') && draft.pts.length > 1));
   renderStatus();
   autosave();
 }
@@ -2492,14 +2516,16 @@ const HINTS = {
   select: 'Drag a selected unit’s corners to resize it, or the arm above it to turn it. '
        + '<kbd>Shift</kbd> keeps its shape, or snaps the angle to 15°.',
   trace: 'Click along the route. Change the height before a click to start a riser. Finish anywhere on a '
-       + 'unit &mdash; the pipe connects where you click it. <kbd>Alt</kbd> frees one corner, or branches '
-       + 'into a run already traced.',
+       + 'unit &mdash; the pipe connects where you click it &mdash; or <b>double-click</b> to stop in mid-air. '
+       + '<kbd>Alt</kbd> frees one corner, or branches into a run already traced.',
   pan: 'Drag to move around the drawing.',
-  joint: 'Click along a run to cut a branch joint into it, then trace on from it.',
-  duct: 'Start on a ducted unit, a duct joint or a corner and click along the duct. Finish on an outlet, '
-      + 'a joint or a corner. The unit’s air volume is shared evenly between the outlets until you pin one.',
-  outlet: 'Click where a diffuser or grille sits. Leave its volume at 0 and it takes an even share of '
-      + 'whatever the unit has left.',
+  joint: 'Click along a pipe run or a duct to cut a branch joint into it, then trace on from it. '
+       + 'While tracing, holding <kbd>Alt</kbd> does the same thing in one go.',
+  duct: 'Click where the duct starts &mdash; on a ducted unit to run its air, or anywhere on the sheet &mdash; '
+      + 'then click along it. Finish on an outlet or a joint, or <b>double-click</b> to stop where you are. '
+      + 'Click an existing duct to branch off it.',
+  outlet: 'Click where a diffuser or grille sits, or on the open end of a duct to turn it into one. '
+      + 'Leave its volume at 0 and it takes an even share of whatever the unit has left.',
   ctl: 'Click where the controller sits. Tick the units it drives in the inspector afterwards.',
 };
 
@@ -2676,6 +2702,22 @@ let armedDuct = 'supply';
 let armedCtl = 'local';
 
 function addOutlet(p) {
+  /* A duct finished in mid-air leaves a joint on its end. Dropping an outlet
+     on that joint turns it into one rather than laying a second, unconnected
+     node on top of it — which is what "put a diffuser on the end of this
+     duct" means, and what everyone tries first. */
+  const hit = hitNode(p, 16);
+  if (hit && hit.type === 'djoint') {
+    pushUndo('make ' + (segName(ductNeighbours(hit.id)[0]) || 'the duct') + ' end at an outlet');
+    hit.type = 'outlet';
+    hit.name = nextName(armedOutlet === 'extract' ? 'EA' : 'SA');
+    hit.kind = armedOutlet;
+    hit.model = ''; hit.lps = 0;
+    select('node', hit.id);
+    render();
+    toast('Outlet on the end of ' + esc(segName(ductNeighbours(hit.id)[0]) || 'the duct'));
+    return;
+  }
   pushUndo('add outlet');
   const n = { id: nid(), type: 'outlet', x: p.x, y: p.y,
     name: nextName(armedOutlet === 'extract' ? 'EA' : 'SA'),
@@ -6418,6 +6460,7 @@ function stepsDialog() {
    ========================================================================== */
 const sc = el('scroller');
 let panning = null, drag = null;
+let lastClick = null;          // for spotting a double-click ourselves
 
 sc.addEventListener('pointerdown', ev => {
   if (!S.img || V3.on) return;
@@ -6428,6 +6471,22 @@ sc.addEventListener('pointerdown', ev => {
     return;
   }
   const p = toDwg(ev);
+
+  /* Double-click ends a run where it is — worked out here rather than left to
+     the browser. `render()` replaces the whole overlay between the two
+     clicks, so the two land on different elements: Chrome never pairs them
+     into a `dblclick`, and a pointerdown carries `detail: 0` rather than a
+     click count. Both of the obvious ways to catch it therefore do nothing,
+     which is exactly how it behaved. Timing and distance are reliable. */
+  if (draft && (draft.kind === 'trace' || draft.kind === 'duct')) {
+    const now = Date.now();
+    if (lastClick && now - lastClick.t < 450 && dist(lastClick, p) * zoom < 7) {
+      lastClick = null;
+      finishDraftInPlace();
+      return;
+    }
+    lastClick = { x: p.x, y: p.y, t: now };
+  } else lastClick = null;
 
   if (tool === 'select') {
     /* The handles are tested first: they sit on and just outside the box, and
@@ -6456,13 +6515,19 @@ sc.addEventListener('pointerdown', ev => {
   }
 
   if (tool === 'joint') {
-    const h = hitSeg(p, 26);
-    if (!h) { toast('Click along a run to cut a joint into it'); return; }
+    /* Whichever run is under the cursor — pipework or ductwork. Without this
+       there was no way to cut a duct joint at all, so a duct network could
+       only be built by holding Alt while tracing, which nobody would guess. */
+    let h = hitSeg(p, 26), net = 'pipe';
+    if (!h) { h = hitSeg(p, 26, 'duct'); net = 'duct'; }
+    if (!h) { toast('Click along a pipe run or a duct to cut a joint into it'); return; }
     pushUndo('cut a joint');
     undoSuspended = true;
-    const j = splitSegment(h.seg, h.r);
+    const j = splitSegment(h.seg, h.r, net);
     undoSuspended = false; refreshUndoBtn();
-    if (S.settings.autoName !== false) autoNameSections(true);
+    if (S.settings.autoName !== false) {
+      if (net === 'duct') autoNameDucts(true); else autoNameSections(true);
+    }
     select('node', j.id);
     render();
     toast('Joint cut into ' + segName(h.seg) + ' — trace a branch off it');
@@ -6486,8 +6551,18 @@ sc.addEventListener('pointerdown', ev => {
   if (tool === 'duct') {
     if (!draft) {
       const sn = snapAt(p, null, 'duct');
-      const c = connectAt(sn);
-      if (!c) { toast('Start on a ducted unit, a duct joint or a corner'); return; }
+      let c = connectAt(sn);
+      /* Unlike pipework, a duct may start on open paper. A refrigerant run
+         has to come from a condenser or it means nothing; a duct run is often
+         drawn before anyone has decided which unit feeds it, and a sock or a
+         length of trunking is a legitimate thing to take off on its own. It
+         simply carries no air until one end reaches a ducted unit, and Check
+         says so. */
+      if (!c) {
+        const j = { id: nid(), type: 'djoint', x: p.x, y: p.y, height: ductTraceHeight() };
+        S.nodes.push(j);
+        c = { node: j, off: null, at: { x: j.x, y: j.y } };
+      }
       draft = { kind: 'duct', startNode: c.node.id, startOff: c.off,
                 pts: [{ x: c.at.x, y: c.at.y, h: ductTraceHeight() }] };
       render();
@@ -6497,6 +6572,10 @@ sc.addEventListener('pointerdown', ev => {
     if (sn) {
       if (sn.kind === 'node' && sn.node.id === draft.startNode) {
         toast('That is where this duct started'); return;
+      }
+      if (sn.kind === 'node' && sn.node.type === 'indoor' && sn.node.unit !== 'ducted') {
+        toast(esc(sn.node.name) + ' is not a ducted unit — change its type to Ducted to run air off it');
+        return;
       }
       const c = connectAt(sn);
       if (c) {
@@ -6608,6 +6687,21 @@ sc.addEventListener('pointermove', ev => {
   }
 });
 
+/* A run that stops in mid-air is still a run: the last point becomes a joint,
+   so it can be picked up and carried on later. Reached by Enter, by
+   double-clicking, or by the × on the hint bar. */
+function finishDraftInPlace() {
+  if (!draft || (draft.kind !== 'trace' && draft.kind !== 'duct')) return false;
+  const duct = draft.kind === 'duct';
+  if (draft.pts.length < 2) { draft = null; render(); return true; }
+  const last = draft.pts[draft.pts.length - 1];
+  const j = { id: nid(), type: duct ? 'djoint' : 'branch', x: last.x, y: last.y,
+              height: duct ? ductTraceHeight() : traceHeight };
+  S.nodes.push(j);
+  if (duct) finishDuct(j.id); else finishTrace(j.id);
+  return true;
+}
+
 function endPointer(ev) {
   if (panning) { panning = null; sc.classList.remove('down'); }
   if (drag) { if (drag.moved) openInspector(); drag = null; }
@@ -6619,6 +6713,7 @@ sc.addEventListener('pointerleave', () => { if (hoverPt) { hoverPt = null; rende
 
 sc.addEventListener('dblclick', ev => {
   if (!S.img) return;
+  if (draft && finishDraftInPlace()) return;
   const p = toDwg(ev);
   const n = hitNode(p);
   if (n) { select('node', n.id); return; }
@@ -6685,7 +6780,8 @@ el('schedTabs').querySelectorAll('button').forEach(b =>
   b.addEventListener('click', () => { schedTab = b.dataset.tab; renderSchedule(); }));
 
 el('insClose').addEventListener('click', closeInspector);
-el('hintX').addEventListener('click', () => setTool('select'));
+el('hintX').addEventListener('click', () => { draft = null; setTool('select'); });
+el('hintFin').addEventListener('click', () => { finishDraftInPlace(); });
 el('orthoChk').addEventListener('change', e => { S.settings.ortho = e.target.checked; render(); });
 el('hgtIn').addEventListener('input', e => {
   const v = parseFloat(e.target.value);
@@ -6693,6 +6789,11 @@ el('hgtIn').addEventListener('input', e => {
 });
 el('hgtIn').addEventListener('wheel', () => el('hgtIn').blur(), { passive: true });
 el('vpalDone').addEventListener('click', () => setTool('select'));
+el('vpalRoll').addEventListener('click', () => {
+  const on = el('vpal').classList.toggle('min');
+  el('vpalRoll').innerHTML = on ? '&plus;' : '&minus;';
+  el('vpalRoll').title = on ? 'Open the panel again' : 'Roll the panel up, to get at the drawing under it';
+});
 el('vpalKw').addEventListener('change', e => { S.settings.showKw = e.target.checked; render(); });
 
 el('zIn').addEventListener('click', () => setZoom(zoom * 1.25));
@@ -6794,24 +6895,7 @@ document.addEventListener('keydown', ev => {
     if (el('drawer').classList.contains('on')) { el('drawer').classList.remove('on'); return; }
     setTool('select'); return;
   }
-  if (ev.key === 'Enter' && draft && draft.kind === 'duct') {
-    if (draft.pts.length < 2) { draft = null; render(); return; }
-    const last = draft.pts[draft.pts.length - 1];
-    const j = { id: nid(), type: 'djoint', x: last.x, y: last.y, height: ductTraceHeight() };
-    S.nodes.push(j);
-    finishDuct(j.id);
-    return;
-  }
-  if (ev.key === 'Enter' && draft && draft.kind === 'trace') {
-    /* A run that stops in mid-air is still a run — the last point becomes a
-       joint, so it can be picked up and carried on later. */
-    if (draft.pts.length < 2) { draft = null; render(); return; }
-    const last = draft.pts[draft.pts.length - 1];
-    const j = { id: nid(), type: 'branch', x: last.x, y: last.y, height: traceHeight };
-    S.nodes.push(j);
-    finishTrace(j.id);
-    return;
-  }
+  if (ev.key === 'Enter' && draft) { finishDraftInPlace(); return; }
   if (ev.key === 'Delete' || ev.key === 'Backspace') { deleteSelected(); return; }
   if (k === 'o') {
     S.settings.ortho = !S.settings.ortho;
