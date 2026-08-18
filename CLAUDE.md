@@ -16,7 +16,7 @@ this should be enough to make a safe change. Keep it current.
 |---|---|
 | File | `index.html` |
 | URL | the repo root |
-| Does | Refrigerant pipework take-off from a scaled layout: place the condensers and indoor units, trace the routes, set a height at every point, name every section, report the lengths. Ductwork, outlets and controllers off the same sheet |
+| Does | Refrigerant pipework take-off from a scaled layout: place the condensers and indoor units, trace the routes, set a height at every point, name every section, report the lengths. Ductwork, HRV, outlets and controllers off the same sheet |
 | Repo | `github.com/mikesweet23/ac-trace` |
 
 **It does not size refrigerant pipe, and it must never look as though it
@@ -110,45 +110,81 @@ in the file, so a genuine oddity survives a reload.
 
 ### The air is a second network, kept apart from the first
 
-A ducted unit moves air as well as refrigerant, so it is the root of a second
-tree: `S.ducts`, its own runs, its own naming (`D` mains from the unit, `E`
-branches), its own joints (`djoint`, never `branch`), its own schedule tab and
-its own sheets. `inNet()` is what keeps them apart — pipework will not snap to
-a diffuser and ductwork will not snap to a BC box — and `runsOf(net)` picks
+A ducted indoor unit or an HRV is the root of a second tree: `S.ducts`, its
+own runs, its own joints (`djoint`, never `branch`), its own schedule tab and
+its own sheets. `isAirRoot()` is the only test for a root — a ducted FCU
+(`type === 'indoor' && unit === 'ducted'`) or `type === 'hrv'`. `inNet()` is
+what keeps the two networks apart — pipework will not snap to a diffuser or
+an HRV, and ductwork will not snap to a BC box — and `runsOf(net)` picks
 which array a tool is working in. Mixing the two would put a duct in the
 refrigerant schedule, which is the one thing that must never happen.
 
-**The unit's own volume is what there is to share.** `designFlow()` is the
+**An HRV is never an indoor unit.** It is `type: 'hrv'`, in `PLANT_TYPES`,
+not in `INDOOR_TYPES` and not in `PIPE_NODES`. Check would otherwise demand
+a condenser. It is always standalone: the only link to the rest of the job
+is a controller ticked against it. Default box 1.00 × 0.80 m, editable the
+same way as every other unit.
+
+**Four airs, not two.** `DUCT_KINDS` is `oa` / `ea` / `sa` / `ra`
+(outdoor, exhaust, supply, return). Older files stored `supply` / `extract`;
+`ductKind()` reads those as SA / EA and keeps writing the four-letter keys.
+A ducted FCU still only needs supply and extract. An HRV uses all four:
+OA and EA to outside, SA and RA to the rooms. Tick *Open return* when the
+unit itself is the return — then Check does not ask for an RA duct.
+
+**Share per stream, not one pot for the whole unit.** `designFlow()` is the
 ticked fan speed's l/s off `n.fan`, straight from the manufacturer's data.
-`solveDucts()` takes off everything pinned to a figure first, then divides
-what is left evenly between everything set to share — an outlet with `lps` 0,
-a section with `outletLps` 0, or a sock. Pin one and the rest re-share; that
-is the whole model and it is why the first answer is always even.
+`solveDucts()` walks each kind on its own: takes off everything pinned to a
+figure first, then divides what is left evenly between everything on that
+stream set to share — an outlet with `lps` 0, a section with `outletLps` 0,
+or a sock. Pin one and the rest of that stream re-share. A ducted FCU's
+supply and extract are the same volume twice, not one pot the grilles drink
+from together.
 
 Three ways to take air off, because a real drawing has all three: an outlet
 node placed where the diffuser is; a count of outlets on a section with a
 total against it; and a section marked `sock`, which spreads its take-off
 evenly over its own length and reports l/s per metre. All three are counted
 in `totals().outlets` and all three appear on the Outlets sheet, or the air
-does not add up on paper.
+does not add up on paper. An outlet also carries a grille (`GRILLE_TYPES`:
+circular, 600×600, egg crate, open return, external louvre). The face is
+what turns its l/s into a face velocity; the plan footprint is only a
+starting size.
+
+**HRV ducts are named by stream.** `autoNameDucts()` keeps FCU runs as `D`
+mains and `E` branches. Off an HRV the counters are `OA1`, `EA1`, `SA1`,
+`RA1` — never `D` — so a schedule cannot mint a second `D1`. The counters
+still run across the whole drawing.
+
+**An inline heater is a box on the run**, `type: 'heater'`, not a tick on
+the HRV. Drop it on a duct or a `djoint` and it sits in line; deleting it
+with two ducts on it heals the run (`mergeAtDuctNode()`). Check expects it
+on outdoor air.
 
 **Velocity comes from the size, and only from the size.** `ductArea()` turns
-a Ø or a W×H into m², and the velocity is the section's carried flow over it.
-`suggestDia()` goes the other way for convenience, but it only suggests:
-sizing ductwork is a different job and a different tool.
+a Ø or a W×H into m², and the velocity is the section's carried flow over
+it. `faceAreaM2()` / `faceVelOf()` do the same for a grille. `suggestDia()`
+goes the other way for convenience, but it only suggests: sizing ductwork
+is a different job and a different tool. The conventions this Check uses
+are 2.0–8.0 m/s in the duct (the helper aims at 4.0) and 1.0–3.0 m/s at
+the face. An HRV stream more than 10% off the unit volume is called out.
 
 ### Controllers are located, not connected
 
 A controller is on neither network. It carries a name, a kind, a model, a
-height and `serves`, a list of indoor unit ids. Its leaders are drawn **only
-while it is selected**, because drawing every controller's links at once
-buries the pipework under them.
+height and `serves`, a list of indoor unit and HRV ids. Its leaders are
+drawn **only while it is selected**, because drawing every controller's
+links at once buries the pipework under them.
 
-### The three colours
+### The three colours — and the four airs
 
 `LINES` — liquid `#b8791b`, suction gas `#2471a3`, high-pressure gas
 `#c0392b`. The same three values on the plan, in 3D, in the legend, in the
 PDF legend. Nothing else in the tool may use them.
+
+`DUCT_KINDS` owns the four air colours: OA `#1a7a6d`, EA `#8c5bb8`,
+SA `#2f8f7a`, RA `#c17a3a`. Same rule — plan, 3D, legend, both reports.
+Do not borrow a refrigerant colour for a duct, or the other way round.
 
 ### The scale gate
 
@@ -179,7 +215,8 @@ Repeated fine angles re-encode the bitmap and soften it; the dialog says so.
   condenser**, so no two sections on one sheet can share a name — a schedule
   with two `M1`s on it is unusable. At each junction the leg carrying the most
   duty carries on as the same run and the rest branch off it, which is why
-  `rollUpDuty()` has to run before the walk.
+  `rollUpDuty()` has to run before the walk. Ductwork off a ducted FCU is
+  `D` / `E`. Off an HRV it is `OA` / `EA` / `SA` / `RA` — never reuse `D`.
 - **A run can only be joined to a point that already exists** — a unit, a
   joint, or a corner that has been traced. The cursor is pulled to the nearest
   one and the connection is ringed and named *before* the click. Hold Alt, or
@@ -308,10 +345,14 @@ instead, and the modal says to open and print it.
 
 **Excel** — a real `.xlsx`, written here. A workbook is a zip of XML parts;
 `zipStore()` stores rather than deflates, which is an ordinary zip and saves
-carrying a compressor for a file this size. Seven sheets: Summary, Pipe
-sections, Units, Systems, Check, Layout plan, 3D plan. The last two are
-picture sheets — `drawingXml()` plus `xl/media/imageN.png`, anchored below
-their caption rows.
+carrying a compressor for a file this size. The sheets that always appear:
+Summary, Pipe sections, Materials, Units, Systems, Check, Layout plan, 3D
+plan. Air sheets — Ductwork, Outlets, Ventilation, Controllers — are
+dropped when there is nothing on them. Layout plan and 3D plan are picture
+sheets — `drawingXml()` plus `xl/media/imageN.png`, anchored below their
+caption rows. The Summary sheet still says this file does not size
+refrigerant pipe; add the same sentence for ductwork if a sizing feature
+is ever added.
 
 **The PDF has to read as a document, not as a web page printed out.** The
 rules that keep it that way, all in the report's own `<style>` block:
@@ -396,17 +437,30 @@ Five minutes, and it exercises everything:
    shared three ways, that pinning one outlet re-shares the other two, that a
    size gives a velocity, and that ticking *Ventilated sock* reports l/s per
    metre. Place a controller and tick a unit against it.
-10. **Line sizes.** Open the schedule, tick every section, set a liquid, a gas
-   and an HP gas size and apply them. Confirm the HP gas is skipped on the
-   2-pipe sections and named in the toast, and that the inspector shows the
-   same sizes as the drawer for whichever section is selected.
-11. **Save**, reload the page, **Open** the file. Every section name, length,
-   point height, footprint, angle, connection point, line size, duct size,
-   air volume and controller must come back identical.
-12. **PDF report** — the layout plan and both 3D pictures must be there, in
-   colour, with the section labels legible. **Excel** — open it and confirm
-   seven sheets, that *Pipe sections* totals match the schedule drawer, and
-   that the two picture sheets carry their pictures.
+10. **HRV.** Place an HRV. Type low/medium/high l/s, tick a speed. Trace
+    outdoor and exhaust to louvres, supply and return to rooms. Confirm the
+    sections name as `OA` / `EA` / `SA` / `RA`, not `D` / `E`. Drop an
+    inline heater on the OA run — it sits in the line, not as a tick.
+    Confirm each stream shares the ticked volume on its own, that a duct
+    size gives a velocity, and that a grille face gives a face velocity.
+    Tick *Open return* and confirm Check stops asking for an RA duct.
+    Change the box size by dragging a corner. Tick the HRV on a controller.
+    Run Check on an HRV-only sheet: it must come back clean without asking
+    for a condenser.
+11. **Line sizes.** Open the schedule, tick every section, set a liquid, a gas
+    and an HP gas size and apply them. Confirm the HP gas is skipped on the
+    2-pipe sections and named in the toast, and that the inspector shows the
+    same sizes as the drawer for whichever section is selected.
+12. **Save**, reload the page, **Open** the file. Every section name, length,
+    point height, footprint, angle, connection point, line size, duct size,
+    air volume, HRV stream, heater, grille and controller must come back
+    identical.
+13. **PDF report** — the layout plan and both 3D pictures must be there, in
+    colour, with the section labels legible. An HRV job must show the
+    ventilation heading and the room in/out line. **Excel** — open it and
+    confirm *Pipe sections* totals match the schedule drawer, that a job
+    with an HRV has a *Ventilation* sheet, and that the two picture sheets
+    carry their pictures.
 
 Reconcile one figure by hand at least once: for any indoor unit, the sum of
 *One way m* down its Route in the report must equal its *Pipe run m*.
@@ -436,12 +490,14 @@ Replace when better figures arrive; none of them changes a length.
 | Assumption | Currently |
 |---|---|
 | Indoor unit footprints | Wall 1.05 × 0.24, 900 cassette 0.95 × 0.95, 600 cassette 0.62 × 0.62, ducted 1.40 × 0.70, 1-way underslung 1.20 × 0.50 m. Representative, not any one manufacturer's — and only a starting size, because every unit can be dragged or typed to the size it really is |
-| Casing depth, 3D only (`t`) | Condenser 1.30, ducted 0.35, wall and 900 cassette 0.30, BC controller 0.30, 600 cassette 0.26, 1-way underslung 0.25, single BC box 0.22 m. Nominal: nothing here is told how deep a real unit is, and no length depends on it |
-| Default heights | condenser 0.30, pipe run 3.20, ductwork 3.40, indoor 2.70, BC box 2.90 m above finished floor |
+| HRV / heater footprints | HRV 1.00 × 0.80, inline heater 0.40 × 0.25 m. Starting size only — both can be dragged or typed |
+| Casing depth, 3D only (`t`) | Condenser 1.30, ducted and HRV 0.35, wall and 900 cassette 0.30, BC controller 0.30, 600 cassette 0.26, 1-way underslung 0.25, single BC box and heater 0.22 m. Nominal: nothing here is told how deep a real unit is, and no length depends on it |
+| Default heights | condenser 0.30, pipe run 3.20, ductwork 3.40, indoor 2.70, BC box 2.90, HRV and heater 2.90 m above finished floor |
 | Connected-ratio flag | over 130% is called out. Real limits are per range and per refrigerant |
 | Twin/triple leg tolerance | 20% between the legs past the tee |
 | Pipe separation on the plan and in 3D | drawn wider than true so three pipes read as three pipes. True separation is one line on screen |
-| Duct velocity the size helper aims at | 4.0 m/s, and a warning past 8 m/s. Both are conventions, not limits — the job decides |
+| Duct velocity | helper aims at 4.0 m/s; Check warns below 2.0 and above 8.0. Face velocity warns below 1.0 and above 3.0. All conventions, not limits — the job decides |
+| HRV stream balance | a stream more than 10% off the unit volume, or supply and exhaust more than 10% apart, is called out |
 | Round duct sizes offered | 100 to 800 mm in the standard steps. Rectangular is whatever W×H is typed |
 | Fan speeds | Low, medium and high, each l/s and Pa, all typed in from the unit's data. Nothing here works an airflow out |
 | Insulation | 1/2" wall by default, 3/8" the thinner option, per section. Insulated length is the pipe metres, because every line is insulated over its whole length |
