@@ -541,6 +541,8 @@
   }
   .segbtn button:hover { background: var(--paper-2); }
   .segbtn button.on { background: var(--measure); color: #fff; font-weight: 600; }
+  .fld .segbtn { display: inline-flex; vertical-align: middle; text-transform: none; letter-spacing: 0; }
+  .fld .segbtn button { text-transform: none; letter-spacing: 0; height: 26px; padding: 0 8px; font-size: 11px; }
   .three-stage { position: relative; flex: 1; min-height: 0; background: var(--paper-2); }
   #threeCv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
   #threeCv.down { cursor: grabbing; }
@@ -1058,6 +1060,26 @@ function fanAt(n, key) {
 function designSpeed(n) { return (n && n.fanSpeed) || 'high'; }
 function designFlow(n) { return fanAt(n, designSpeed(n)).v; }
 
+/* Air volumes are stored as l/s. The toggle only changes how they are
+   typed and shown: 1 l/s = 3.6 m³/h. */
+const M3H_PER_LPS = 3.6;
+function airVol() { return S.settings.airVol === 'm3h' ? 'm3h' : 'lps'; }
+function airVolLabel() { return airVol() === 'm3h' ? 'm³/h' : 'l/s'; }
+function lpsToAir(lps) { return (parseFloat(lps) || 0) * (airVol() === 'm3h' ? M3H_PER_LPS : 1); }
+function airToLps(v) { return (parseFloat(v) || 0) / (airVol() === 'm3h' ? M3H_PER_LPS : 1); }
+function fmtAir(lps, d) { return fmt(lpsToAir(lps), d === undefined ? 0 : d); }
+function airVolToggle() {
+  const u = airVol();
+  return '<span class="segbtn" role="group" aria-label="Air volume unit">'
+    + '<button type="button" data-airvol="lps"' + (u === 'lps' ? ' class="on"' : '') + '>l/s</button>'
+    + '<button type="button" data-airvol="m3h"' + (u === 'm3h' ? ' class="on"' : '') + '>m³/h</button>'
+    + '</span>';
+}
+function bothAir(lps) {
+  const q = parseFloat(lps) || 0;
+  return fmt(q, 0) + ' l/s · ' + fmt(q * M3H_PER_LPS, 0) + ' m³/h';
+}
+
 /* Controllers. Placed, named, and ticked against the units they drive. */
 const CONTROLLER_KINDS = {
   local:   { label: 'Local controller', abbr: 'LC' },
@@ -1097,6 +1119,7 @@ const S = {
     hrvHeight: 2.90,             // HRV and inline heater, ceiling void
     ductVel: 4.0,                // the velocity the size helper aims at, m/s
     defaultDuctShape: 'circ',
+    airVol: 'lps',               // lps | m3h — how airflow is typed and shown
   },
   setupDone: false,
 };
@@ -1532,11 +1555,12 @@ function systemsStats() {
 
 /* ==========================================================================
    THE AIR
-   A duct network is a tree rooted at a ducted unit. The unit's air volume at
-   its design fan speed is what there is to share out, and by default it is
-   shared evenly between everything taking air off — which is the right first
-   answer and almost never the final one, so anything can be pinned to a
-   figure and the rest re-share what is left.
+   A duct network is a tree rooted at a ducted unit or an HRV. The figure
+   typed on the unit is the supply air for each stream — the same volume on
+   the duct and on every unpinned outlet, not a pot divided among the
+   grilles. Type a volume on a grille to pin that one; the others stay at
+   the unit figure. Air volumes are stored as l/s; they can be typed as
+   l/s or m³/h.
 
    Three ways to take air off, because a real drawing has all three:
      · an outlet placed where the diffuser actually is, with its own l/s;
@@ -1598,36 +1622,28 @@ function solveDucts() {
     d.area = ductArea(d);
   });
 
-  /* Share per stream, not across the whole unit. An HRV has four ports and
-     each carries the design volume; a ducted FCU's supply and extract are
+  /* The figure on the unit is the supply air for that stream — the same
+     volume on every unpinned outlet and on the duct, not a pot to divide
+     among the grilles. Type a volume on a grille to pin that one; the
+     others stay at the unit figure. An HRV has four ports and each stream
+     is set out at that same figure; a ducted FCU's supply and extract are
      the same volume twice, not one pot the grilles drink from together. */
   const shareStream = (root, mineAll, kind, total) => {
     const mine = mineAll.filter(d => ductKindOf(d) === kind);
     const outletNodes = S.nodes.filter(n =>
       n.type === 'outlet' && n.unitId === root.id && ductKindOf(n) === kind);
-    let fixed = 0, shares = 0;
     outletNodes.forEach(o => {
       const v = parseFloat(o.lps) || 0;
-      if (v > 0) fixed += v; else shares += 1;
-    });
-    mine.forEach(d => {
-      const v = parseFloat(d.outletLps) || 0;
-      if (v > 0) fixed += v; else shares += autoUnits(d);
-    });
-    const spare = Math.max(0, total - fixed);
-    const per = shares > 0 ? spare / shares : 0;
-    outletNodes.forEach(o => {
-      const v = parseFloat(o.lps) || 0;
-      o.flow = v > 0 ? v : per;
+      o.flow = v > 0 ? v : total;
       o.auto = !(v > 0);
     });
     mine.forEach(d => {
       const v = parseFloat(d.outletLps) || 0;
-      const nAuto = autoUnits(d);
       d.nOutlets = d.sock ? Math.max(1, parseInt(d.outlets, 10) || 1) : (parseInt(d.outlets, 10) || 0);
-      d.takeOff = v > 0 ? v : per * nAuto;
-      d.perOutlet = d.nOutlets > 0 ? d.takeOff / d.nOutlets : 0;
-      d.perMetre = d.sock && d.lengthM > 0.01 ? d.takeOff / d.lengthM : 0;
+      const nAuto = autoUnits(d);
+      d.takeOff = v > 0 ? v : (nAuto > 0 ? total : 0);
+      d.perOutlet = d.nOutlets > 0 ? (v > 0 ? v / d.nOutlets : total) : 0;
+      d.perMetre = d.sock && d.lengthM > 0.01 && d.takeOff > 0 ? d.takeOff / d.lengthM : 0;
     });
     return { mine, outletNodes };
   };
@@ -1653,6 +1669,10 @@ function solveDucts() {
     };
     carried(root.id);
     mine.forEach(d => {
+      /* The duct carries the unit's supply air, not the sum of every
+         grille. Pinning a grille changes that grille, not the figure
+         the run is set out at. */
+      if (total > 0) d.flow = total;
       d.vel = d.area > 0 ? (d.flow / 1000) / d.area : 0;
     });
   });
@@ -1668,14 +1688,19 @@ function solveDucts() {
     const outs = S.nodes.filter(n => n.type === 'outlet' && n.unitId === root.id);
     const sectionOutlets = mine.reduce((t, d) => t + (d.nOutlets || 0), 0);
     const streams = {};
+    const total = designFlow(root);
     DUCT_KIND_ORDER.forEach(k => {
       const sd = mine.filter(d => ductKindOf(d) === k);
       const so = outs.filter(o => ductKindOf(o) === k);
-      const delivered = so.reduce((t, o) => t + (o.flow || 0), 0)
+      const pinned = so.some(o => !o.auto)
+        || sd.some(d => (parseFloat(d.outletLps) || 0) > 0);
+      const summed = so.reduce((t, o) => t + (o.flow || 0), 0)
         + sd.reduce((t, d) => t + (d.takeOff || 0), 0);
+      const onStream = so.length + sd.reduce((t, d) => t + (d.nOutlets || 0), 0);
+      const delivered = pinned ? summed : (onStream && total > 0 ? total : 0);
       streams[k] = {
         ducts: sd, outlets: so, delivered,
-        nOutlets: so.length + sd.reduce((t, d) => t + (d.nOutlets || 0), 0),
+        nOutlets: onStream,
         maxVel: sd.reduce((m, d) => Math.max(m, d.vel || 0), 0),
         lengthM: sd.reduce((t, d) => t + d.lengthM, 0),
       };
@@ -1684,17 +1709,18 @@ function solveDucts() {
     outs.forEach(o => {
       const room = String(o.room || '').trim() || '(no room)';
       const row = rooms[room] || (rooms[room] = { room, sa: 0, ra: 0, ea: 0, oa: 0 });
-      row[ductKindOf(o)] = (row[ductKindOf(o)] || 0) + (o.flow || 0);
+      const k = ductKindOf(o);
+      if (!o.auto) row[k] = (row[k] || 0) + (o.flow || 0);
+      else if (!(row[k] > 0)) row[k] = o.flow || 0;
     });
     return {
       unit: root, ducts: mine, outlets: outs, streams, rooms: Object.keys(rooms).map(k => rooms[k]),
       plant: root.type === 'hrv' ? 'hrv' : 'ducted',
       openReturn: !!(root.type === 'hrv' && root.openReturn),
-      total: designFlow(root), speed: designSpeed(root),
+      total: total, speed: designSpeed(root),
       pa: fanAt(root, designSpeed(root)).p,
       lengthM: mine.reduce((t, d) => t + d.lengthM, 0),
-      delivered: outs.reduce((t, o) => t + (o.flow || 0), 0)
-                 + mine.reduce((t, d) => t + (d.takeOff || 0), 0),
+      delivered: DUCT_KIND_ORDER.reduce((t, k) => t + ((streams[k] && streams[k].delivered) || 0), 0),
       nOutlets: outs.length + sectionOutlets,
       maxVel: mine.reduce((m, d) => Math.max(m, d.vel || 0), 0),
     };
@@ -2489,7 +2515,7 @@ function drawNode(g, n, k) {
     bits.push(n.kind === 'single' ? 'BC single' : 'BC controller');
   } else if (n.type === 'hrv') {
     bits.push('HRV');
-    if (designFlow(n) > 0) bits.push(fmt(designFlow(n), 0) + ' l/s');
+    if (designFlow(n) > 0) bits.push(fmtAir(designFlow(n), 0) + ' ' + airVolLabel());
     if (n.openReturn) bits.push('open ret');
   } else if (n.type === 'heater') {
     bits.push('Heater');
@@ -2498,7 +2524,7 @@ function drawNode(g, n, k) {
     bits.push(ductKindDef(n).short);
     const g = grilleOf(n);
     if (g.short) bits.push(g.short);
-    if (n.flow > 0) bits.push(fmt(n.flow, 0) + ' l/s' + (n.auto ? '' : ' set'));
+    if (n.flow > 0) bits.push(fmtAir(n.flow, 0) + ' ' + airVolLabel() + (n.auto ? '' : ' set'));
     if (n.faceVel > 0.05) bits.push(fmt(n.faceVel, 1) + ' m/s');
   } else if (n.type === 'controller') {
     bits.push((CONTROLLER_KINDS[n.kind] || CONTROLLER_KINDS.local).abbr);
@@ -2704,7 +2730,7 @@ const HINTS = {
   duct: 'Start on a ducted unit or an HRV, or anywhere on the sheet. Finish on an outlet, '
       + 'a heater or a joint, or <b>double-click</b> to stop. Pick the air (OA, EA, SA, RA) first.',
   outlet: 'Click where a grille sits, or on the open end of a duct to turn it into one. '
-      + 'Pick the air and the grille first. Leave volume at 0 for an even share.',
+      + 'Pick the air and the grille first. Leave volume at 0 to use the unit’s supply air.',
   ctl: 'Click where the controller sits. Tick the indoor units and HRVs it drives afterwards.',
   hrv: 'Pick HRV or inline heater, then click. A heater dropped on a duct sits in that run.',
 };
@@ -3618,16 +3644,21 @@ function bcForm(n) {
    here too, and that is the volume the duct network shares out. */
 function fanFields(n) {
   const sp = designSpeed(n);
-  return '<div class="fld"><span>Airflow and resistance <em>from the unit’s data</em></span>'
+  const q = designFlow(n);
+  const step = airVol() === 'm3h' ? 10 : 5;
+  return '<div class="fld"><span>Airflow and resistance <em>from the unit’s data</em> '
+    + airVolToggle() + '</span>'
     + '<div class="hpts">'
     + '<div class="hpt" style="grid-template-columns:60px 1fr 1fr 26px">'
-    + '<span class="ix">Speed</span><span class="ix">l/s</span><span class="ix">Pa</span><span></span></div>'
+    + '<span class="ix">Speed</span><span class="ix">' + esc(airVolLabel()) + '</span>'
+    + '<span class="ix">Pa</span><span></span></div>'
     + FAN_SPEEDS.map(f => {
         const v = fanAt(n, f.key);
         return '<div class="hpt" style="grid-template-columns:60px 1fr 1fr 26px">'
           + '<span class="ix" style="text-align:left">' + f.label + '</span>'
-          + '<input type="number" step="5" min="0" data-fan="' + f.key + '" value="' + v.v + '">'
-          + '<input type="number" step="5" min="0" data-pa="' + f.key + '" value="' + v.p + '">'
+          + '<input type="number" step="' + step + '" min="0" data-fan="' + f.key + '" value="'
+          + (v.v ? fmtAir(v.v, airVol() === 'm3h' ? 0 : 0) : '') + '">'
+          + '<input type="number" step="5" min="0" data-pa="' + f.key + '" value="' + (v.p || '') + '">'
           + '<span class="ix" title="Set out the ductwork at this speed">'
           + '<input type="radio" name="fanSpeed" data-speed="' + f.key + '"'
           + (sp === f.key ? ' checked' : '') + ' style="width:14px;height:14px;margin:0"></span>'
@@ -3635,8 +3666,9 @@ function fanFields(n) {
       }).join('')
     + '</div>'
     + '<div style="font-size:11px;color:var(--muted);margin-top:5px">'
-    + 'The ticked speed is the volume each air stream off this unit is set out at — '
-    + '<b>' + fmt(designFlow(n), 0) + ' l/s</b> at ' + fmt(fanAt(n, sp).p, 0) + ' Pa.</div></div>';
+    + 'The ticked speed is the supply air on every stream off this unit — '
+    + '<b>' + bothAir(q) + '</b> at ' + fmt(fanAt(n, sp).p, 0) + ' Pa. '
+    + 'It is not divided among the outlets.</div></div>';
 }
 
 /* ---------- outlet ---------- */
@@ -3667,17 +3699,19 @@ function outletForm(n) {
     + (parseFloat(n.freePct) || '') + '"></label>'
     + '<label class="fld"><span>Type or model</span><input id="fModel" value="' + esc(n.model || '')
     + '" placeholder="e.g. 300×300 4-way diffuser"></label>'
-    + '<label class="fld"><span>Air volume <em>l/s — leave at 0 to take an even share</em></span>'
-    + '<input type="number" id="fLps" step="1" min="0" value="' + (parseFloat(n.lps) || 0) + '"></label>'
+    + '<label class="fld"><span>Air volume <em>' + esc(airVolLabel())
+    + ' — leave at 0 to use the unit’s supply air</em> ' + airVolToggle() + '</span>'
+    + '<input type="number" id="fLps" step="' + (airVol() === 'm3h' ? 10 : 1) + '" min="0" value="'
+    + (parseFloat(n.lps) > 0 ? fmtAir(n.lps, 0) : '0') + '"></label>'
     + heightField(heightOf(n))
     + '<label class="fld"><span>Room or reference</span><input id="fRoom" value="' + esc(n.room || '') + '"></label>';
 
   const rows = [];
   if (unit) {
     rows.push(['Off unit', esc(unit.name)]);
-    rows.push(['Unit at ' + designSpeed(unit), fmt(designFlow(unit), 0) + ' l/s']);
+    rows.push(['Unit at ' + designSpeed(unit), bothAir(designFlow(unit))]);
   }
-  rows.push(['This outlet', fmt(n.flow || 0, 1) + ' l/s' + (n.auto ? ' <span class="chip">even share</span>' : '')]);
+  rows.push(['This outlet', bothAir(n.flow || 0) + (n.auto ? ' <span class="chip">unit supply</span>' : '')]);
   rows.push(['Face', esc(faceSizeLabel(n) || '—') + (parseFloat(n.freePct) > 0 ? ' at ' + fmt(n.freePct, 0) + '% free' : '')]);
   if (n.faceVel > 0.01) rows.push(['<b>Face velocity</b>', '<b>' + fmt(n.faceVel, 2) + ' m/s</b>']);
   if (n.room) {
@@ -3686,13 +3720,13 @@ function outletForm(n) {
       .reduce((t, x) => t + (x.flow || 0), 0);
     const out = mates.filter(x => ductKindOf(x) === 'ra' || ductKindOf(x) === 'ea')
       .reduce((t, x) => t + (x.flow || 0), 0);
-    rows.push(['Room in / out', fmt(inn, 0) + ' / ' + fmt(out, 0) + ' l/s']);
+    rows.push(['Room in / out', bothAir(inn) + ' in, ' + bothAir(out) + ' out']);
   }
   html += derivedBox(rows);
   if (!n.reached) html += '<div class="note bad">No duct reaches this outlet, so it is in no air '
     + 'total. Trace a duct to it.</div>';
-  else if (n.auto) html += '<div class="note">Taking an even share of this stream after '
-    + 'anything pinned to a figure. Type a volume here to pin this one.</div>';
+  else if (n.auto) html += '<div class="note">Showing the unit’s supply air — the same figure '
+    + 'as the unit, not a share of it. Type a volume here to pin this grille.</div>';
   if (n.faceVel > 0 && (n.faceVel < VEL_FACE_LO || n.faceVel > VEL_FACE_HI))
     html += '<div class="note ' + (n.faceVel > VEL_FACE_HI ? 'bad' : '') + '">Face velocity is '
       + fmt(n.faceVel, 1) + ' m/s — the convention here is ' + fmt(VEL_FACE_LO, 1) + '–'
@@ -3839,10 +3873,13 @@ function ductForm(d) {
   html += '<div class="fld"><span>Air off this section</span>'
     + '<div class="row2">'
     + '<input type="number" id="fDOut" step="1" min="0" value="' + (parseInt(d.outlets, 10) || 0) + '" title="Number of outlets on this section">'
-    + '<input type="number" id="fDOutLps" step="1" min="0" value="' + (parseFloat(d.outletLps) || 0) + '" title="Total l/s off this section — 0 shares evenly">'
+    + '<input type="number" id="fDOutLps" step="' + (airVol() === 'm3h' ? 10 : 1) + '" min="0" value="'
+    + ((parseFloat(d.outletLps) || 0) > 0 ? fmtAir(d.outletLps, 0) : '0')
+    + '" title="Total off this section — 0 uses the unit’s supply air">'
     + '</div>'
     + '<div style="display:flex;gap:10px;margin-top:4px;font-size:10px;color:var(--muted)">'
-    + '<span style="flex:1">outlets on it</span><span style="flex:1">l/s total, 0 = even share</span></div>'
+    + '<span style="flex:1">outlets on it</span>'
+    + '<span style="flex:1">' + esc(airVolLabel()) + ' total, 0 = unit supply</span></div>'
     + '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;font-size:12.5px">'
     + '<input type="checkbox" id="fDSock"' + (d.sock ? ' checked' : '') + ' style="width:16px;height:16px;margin-top:2px">'
     + '<span><b>Ventilated sock</b><br><span style="color:var(--ink-soft);font-size:11.5px">'
@@ -3879,18 +3916,18 @@ function ductForm(d) {
     ['From', esc(up ? (up.name || nodeWord(up)) : '—')],
     ['To', esc(dn ? (dn.name || nodeWord(dn)) : '—')],
     ['Length', fmt(d.lengthM || 0, 2) + ' m'],
-    ['<b>Carries</b>', '<b>' + fmt(d.flow || 0, 0) + ' l/s</b>'],
+    ['<b>Carries</b>', '<b>' + bothAir(d.flow || 0) + '</b>'],
   ];
   if (d.area > 0) {
     rows.push(['Free area', fmt(d.area, 4) + ' m²']);
     rows.push(['<b>Velocity</b>', '<b>' + fmt(d.vel || 0, 2) + ' m/s</b>']);
   }
   if (d.takeOff > 0) {
-    rows.push(['Off this section', fmt(d.takeOff, 1) + ' l/s']);
+    rows.push(['Off this section', bothAir(d.takeOff)]);
     if (d.sock) rows.push(['Along the sock', fmt(d.perMetre, 1) + ' l/s per metre']);
-    else if (d.nOutlets > 0) rows.push(['Each outlet', fmt(d.perOutlet, 1) + ' l/s × ' + d.nOutlets]);
+    else if (d.nOutlets > 0) rows.push(['Each outlet', bothAir(d.perOutlet) + ' × ' + d.nOutlets]);
   }
-  if (unit) rows.push(['Off unit', esc(unit.name) + ' — ' + fmt(designFlow(unit), 0) + ' l/s at ' + designSpeed(unit)]);
+  if (unit) rows.push(['Off unit', esc(unit.name) + ' — ' + bothAir(designFlow(unit)) + ' at ' + designSpeed(unit)]);
   rows.push(['Height', Math.abs(hs[0] - hs[hs.length - 1]) < 0.005
     ? fmt(hs[0], 2) + ' m' : fmt(hs[0], 2) + '–' + fmt(hs[hs.length - 1], 2) + ' m']);
   html += derivedBox(rows);
@@ -4013,6 +4050,12 @@ function wireInspector() {
   const on = (id, ev, fn) => { const e = el(id); if (e) e.addEventListener(ev, fn); };
   const change = (label, fn) => { pushUndo(label); fn(); render(); openInspector(); };
 
+  el('insBody').querySelectorAll('[data-airvol]').forEach(b =>
+    b.addEventListener('click', () => {
+      S.settings.airVol = b.dataset.airvol === 'm3h' ? 'm3h' : 'lps';
+      render(); openInspector();
+    }));
+
   on('fName', 'input', e => { n.name = e.target.value; render(); el('insName').textContent = n.name; });
   on('fModel', 'input', e => { n.model = e.target.value; });
   on('fRoom', 'input', e => { n.room = e.target.value; });
@@ -4134,7 +4177,7 @@ function wireInspector() {
       n.fan[key][field] = v;
     };
     el('insBody').querySelectorAll('[data-fan]').forEach(i =>
-      i.addEventListener('change', () => { setFan(i.dataset.fan, 'v', parseFloat(i.value) || 0); render(); openInspector(); }));
+      i.addEventListener('change', () => { setFan(i.dataset.fan, 'v', airToLps(i.value)); render(); openInspector(); }));
     el('insBody').querySelectorAll('[data-pa]').forEach(i =>
       i.addEventListener('change', () => { setFan(i.dataset.pa, 'p', parseFloat(i.value) || 0); render(); openInspector(); }));
     el('insBody').querySelectorAll('[data-speed]').forEach(i =>
@@ -4156,7 +4199,7 @@ function wireInspector() {
   on('fFreePct', 'change', e => { pushUndo('set free area'); n.freePct = parseFloat(e.target.value) || 0; render(); openInspector(); });
   on('fLps', 'change', e => {
     pushUndo('set an outlet volume');
-    n.lps = parseFloat(e.target.value) || 0;
+    n.lps = airToLps(e.target.value);
     render(); openInspector();
   });
   on('fOpenRet', 'change', e => change('set open return', () => { n.openReturn = e.target.checked; }));
@@ -4194,7 +4237,7 @@ function wireInspector() {
       d.shape = 'circ'; d.dia = suggestDia(d.flow, S.settings.ductVel); redo();
     });
     on('fDOut', 'change', e => { pushUndo('set outlets'); d.outlets = parseInt(e.target.value, 10) || 0; redo(); });
-    on('fDOutLps', 'change', e => { pushUndo('set an air volume'); d.outletLps = parseFloat(e.target.value) || 0; redo(); });
+    on('fDOutLps', 'change', e => { pushUndo('set an air volume'); d.outletLps = airToLps(e.target.value); redo(); });
     on('fDSock', 'change', e => {
       pushUndo('mark a sock');
       d.sock = e.target.checked;
@@ -4396,7 +4439,7 @@ function auditTake() {
     if (!x.ducts.length && x.plant !== 'hrv') return;
     if (!(x.total > 0) && x.ducts.length) {
       issues.push(x.unit.name + ' has ductwork on it but no air volume against its '
-        + x.speed + ' fan speed, so nothing can be shared out.');
+        + x.speed + ' fan speed, so the ducts have no supply air to carry.');
       return;
     }
     if (x.plant === 'hrv') {
@@ -4790,7 +4833,7 @@ function renderDuctSchedule() {
         + '<td class="dim" colspan="2">' + esc((grilleOf(o).short) + (o.model ? ' · ' + o.model : '')) + '</td>'
         + '<td class="n dim">' + fmt(heightOf(o), 2) + '</td>'
         + '<td class="n"><b>' + fmt(o.flow || 0, 0) + '</b></td>'
-        + '<td colspan="2" class="dim">' + (o.auto ? 'even share' : 'set')
+        + '<td colspan="2" class="dim">' + (o.auto ? 'unit supply' : 'set')
         + (o.faceVel > 0 ? ' · ' + fmt(o.faceVel, 1) + ' m/s face' : '') + '</td>'
         + '<td class="n"></td><td class="n"></td>'
         + '<td class="dim">' + esc(o.room || '') + '</td></tr>';
@@ -5831,7 +5874,7 @@ ${(S.ductSystems || []).some(x => x.ducts.length || x.plant === 'hrv') || t.cont
 <h2>Ductwork, ventilation and control</h2>
 <p class="lede">Air volumes are the plant's own, at the fan speed the ductwork is set out at —
   a ducted unit or an HRV. Each air stream shares on its own. Anything not pinned to a figure
-  takes an even share of what is left. Duct velocity follows from the size given against each
+  uses the unit’s supply air unless a volume is typed against it. Duct velocity follows from the size given against each
   section; face velocity follows from the grille.</p>
 ${(S.ductSystems || []).filter(x => x.ducts.length || x.plant === 'hrv').map(x => '<section class="blk">'
   + '<h3>' + esc(x.unit.name) + ' <span class="sysref">— '
@@ -5875,7 +5918,7 @@ ${(S.ductSystems || []).filter(x => x.ducts.length || x.plant === 'hrv').map(x =
     ], x.outlets.slice().sort((a, b) => (b.flow || 0) - (a.flow || 0)).map(o =>
       [o.name || '', ductKindDef(o).short, grilleOf(o).label, faceSizeLabel(o), o.model || '',
        fmt(o.flow || 0, 0), o.faceVel > 0 ? fmt(o.faceVel, 2) : '',
-       o.auto ? 'even share' : 'set', fmt(heightOf(o), 2), o.room || ''])) : '')
+       o.auto ? 'unit supply' : 'set', fmt(heightOf(o), 2), o.room || ''])) : '')
   + '</section>').join('')}
 ${t.controllers ? '<h3>Controllers</h3>' + repTable([
     { h: 'Controller', cls: 'key' }, { h: 'Kind' }, { h: 'Model', opt: true },
@@ -6389,7 +6432,7 @@ async function exportXlsx() {
   /* ---- Outlets ---- */
   const outl = [[HD('Outlet'), HD('Unit'), HD('Air'), HD('Grille'), HD('Face mm'),
     HD('Type or model'), HD('Volume l/s'), HD('Face velocity m/s'),
-    HD('Set or even share'), HD('Height m aff'), HD('Room'), HD('Ducted')]];
+    HD('Set or unit supply'), HD('Height m aff'), HD('Room'), HD('Ducted')]];
   S.nodes.filter(n => n.type === 'outlet')
     .sort((a, b) => String(a.name).localeCompare(String(b.name), 'en', { numeric: true }))
     .forEach(o => {
@@ -6397,7 +6440,7 @@ async function exportXlsx() {
       outl.push([o.name || '', u ? u.name : '', ductKindDef(o).label,
         grilleOf(o).label, faceSizeLabel(o),
         o.model || '', NB(o.flow || 0), o.faceVel > 0 ? N2(o.faceVel) : '',
-        o.auto ? 'even share' : 'set',
+        o.auto ? 'unit supply' : 'set',
         N2(heightOf(o)), o.room || '', o.reached ? 'yes' : 'NO']);
     });
   /* Outlets set out as a count on a length of duct rather than placed one by
@@ -6407,7 +6450,7 @@ async function exportXlsx() {
     outl.push([segName(d) + (d.sock ? ' (sock)' : ' (' + d.nOutlets + ' on the section)'),
       u ? u.name : '', ductKindDef(d).label, '', '',
       '', NB(d.takeOff), '',
-      (parseFloat(d.outletLps) || 0) > 0 ? 'set' : 'even share',
+      (parseFloat(d.outletLps) || 0) > 0 ? 'set' : 'unit supply',
       N2(vertexH(d, 0)), '', 'yes']);
   });
 
@@ -7044,19 +7087,20 @@ function stepsDialog() {
         + 'when the stubs come out of one end of the casing. Zoom right in to place it accurately — '
         + 'click near the middle and it snaps to the centre as before.')
     + step(S.ducts.length > 0, 'Ductwork off a ducted unit', 'Put the unit’s air volumes and '
-        + 'resistances in on its inspector — low, medium and high — and tick the speed the ductwork is '
-        + 'set out at. Then <b>Duct</b> traces the run and <b>Outlet</b> places the diffusers. The '
-        + 'unit’s volume is shared evenly between everything taking air off; type a figure against one '
-        + 'and the rest re-share what is left. A section can carry a count of outlets instead of '
-        + 'placing each one, and ticking <b>Ventilated sock</b> spreads the air evenly along the whole '
+        + 'resistances in on its inspector — low, medium and high — as l/s or m³/h, and tick the '
+        + 'speed the ductwork is set out at. That figure is the supply air: every duct and every '
+        + 'unpinned outlet on a stream carries it, and it is not divided among the grilles. Type a '
+        + 'volume on a grille to pin that one. A section can carry a count of outlets instead of '
+        + 'placing each one, and ticking <b>Ventilated sock</b> spreads a typed total along the whole '
         + 'length and reports it per metre. Give a section a size and the velocity comes with it.')
     + step(S.nodes.some(n => n.type === 'hrv'), 'Heat recovery ventilation',
         '<b>HRV</b> places a standalone box — not on a refrigerant system. Type low, medium and high '
-        + 'l/s, tick the speed, then trace four airs: outdoor and exhaust to outside, supply and return '
-        + 'to the rooms. Pick the grille (circular, 600×600, egg crate, open return, louvre). Drop an '
-        + '<b>inline heater</b> on the outdoor-air run if there is one. Tick <b>Open return</b> when '
-        + 'the unit itself is the return. Each stream shares the ticked volume; a duct size gives '
-        + 'velocity, a grille face gives face velocity.')
+        + 'as l/s or m³/h, tick the speed, then trace four airs: outdoor and exhaust to outside, '
+        + 'supply and return to the rooms. The ticked figure is the supply air on each stream — the '
+        + 'same on every unpinned outlet, not a share. Pick the grille (circular, 600×600, egg crate, '
+        + 'open return, louvre). Drop an <b>inline heater</b> on the outdoor-air run if there is one. '
+        + 'Tick <b>Open return</b> when the unit itself is the return. A duct size gives velocity, a '
+        + 'grille face gives face velocity.')
     + step(S.nodes.some(n => n.type === 'controller'), 'Controllers', '<b>Control</b> places one '
         + 'wherever it goes — one for the lot, or several in different rooms. Tick the units each one '
         + 'drives; selecting it draws a dashed leader to every one of them.')

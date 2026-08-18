@@ -132,14 +132,16 @@ A ducted FCU still only needs supply and extract. An HRV uses all four:
 OA and EA to outside, SA and RA to the rooms. Tick *Open return* when the
 unit itself is the return — then Check does not ask for an RA duct.
 
-**Share per stream, not one pot for the whole unit.** `designFlow()` is the
-ticked fan speed's l/s off `n.fan`, straight from the manufacturer's data.
-`solveDucts()` walks each kind on its own: takes off everything pinned to a
-figure first, then divides what is left evenly between everything on that
-stream set to share — an outlet with `lps` 0, a section with `outletLps` 0,
-or a sock. Pin one and the rest of that stream re-share. A ducted FCU's
-supply and extract are the same volume twice, not one pot the grilles drink
-from together.
+**The unit figure is the supply air, not a pot to divide.** `designFlow()`
+is the ticked fan speed stored as l/s off `n.fan` (typed as l/s or m³/h;
+1 l/s = 3.6 m³/h). `solveDucts()` walks each kind on its own and puts that
+same figure on every unpinned outlet and on the duct. It does **not**
+divide 111 l/s among three grilles to make 37 each — that is not how a
+supply-air rating works. Type a volume on a grille (`lps` > 0) to pin that
+one; the others stay at the unit figure. A ducted FCU's supply and extract
+are the same volume twice, not one pot the grilles drink from together.
+The setting `S.settings.airVol` (`lps` | `m3h`) is only how the number is
+typed and shown.
 
 Three ways to take air off, because a real drawing has all three: an outlet
 node placed where the diffuser is; a count of outlets on a section with a
@@ -432,17 +434,20 @@ Five minutes, and it exercises everything:
 8. **3D view.** Confirm every unit sits at the height it was given, that the
    height staff reads off, that a 3-pipe run shows three lines, and that the
    unit you resized and turned stands the same way there as on the plan.
-9. **Ductwork.** Put low/medium/high l/s and Pa on a ducted unit, tick a
-   speed, then trace a duct from it to three outlets. Confirm the volume is
-   shared three ways, that pinning one outlet re-shares the other two, that a
-   size gives a velocity, and that ticking *Ventilated sock* reports l/s per
-   metre. Place a controller and tick a unit against it.
-10. **HRV.** Place an HRV. Type low/medium/high l/s, tick a speed. Trace
-    outdoor and exhaust to louvres, supply and return to rooms. Confirm the
-    sections name as `OA` / `EA` / `SA` / `RA`, not `D` / `E`. Drop an
-    inline heater on the OA run — it sits in the line, not as a tick.
-    Confirm each stream shares the ticked volume on its own, that a duct
-    size gives a velocity, and that a grille face gives a face velocity.
+9. **Ductwork.** Put low/medium/high on a ducted unit as l/s, then toggle
+   to m³/h and confirm 111 l/s reads as 400 m³/h. Tick a speed, then trace
+   a duct to three outlets. Confirm each outlet shows the **unit** figure,
+   not a third of it. Pin one outlet to a different volume and confirm the
+   other two stay at the unit figure. A size gives a velocity. Ticking
+   *Ventilated sock* reports l/s per metre. Place a controller and tick a
+   unit against it.
+10. **HRV.** Place an HRV. Type low/medium/high as l/s or m³/h, tick a
+    speed. Trace outdoor and exhaust to louvres, supply and return to rooms.
+    Confirm the sections name as `OA` / `EA` / `SA` / `RA`, not `D` / `E`.
+    Drop an inline heater on the OA run — it sits in the line, not as a
+    tick. Confirm each stream carries the ticked volume (not a share of
+    it), that a duct size gives a velocity, and that a grille face gives a
+    face velocity.
     Tick *Open return* and confirm Check stops asking for an RA duct.
     Change the box size by dragging a corner. Tick the HRV on a controller.
     Run Check on an HRV-only sheet: it must come back clean without asking
