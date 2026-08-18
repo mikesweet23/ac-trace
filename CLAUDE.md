@@ -132,16 +132,18 @@ A ducted FCU still only needs supply and extract. An HRV uses all four:
 OA and EA to outside, SA and RA to the rooms. Tick *Open return* when the
 unit itself is the return — then Check does not ask for an RA duct.
 
-**The unit figure is the supply air, not a pot to divide.** `designFlow()`
+**The unit figure is the stream total, shared at every tee.** `designFlow()`
 is the ticked fan speed stored as l/s off `n.fan` (typed as l/s or m³/h;
-1 l/s = 3.6 m³/h). `solveDucts()` walks each kind on its own and puts that
-same figure on every unpinned outlet and on the duct. It does **not**
-divide 111 l/s among three grilles to make 37 each — that is not how a
-supply-air rating works. Type a volume on a grille (`lps` > 0) to pin that
-one; the others stay at the unit figure. A ducted FCU's supply and extract
-are the same volume twice, not one pot the grilles drink from together.
-The setting `S.settings.airVol` (`lps` | `m3h`) is only how the number is
-typed and shown.
+1 l/s = 3.6 m³/h). `solveDucts()` walks each kind on its own. Unpinned
+outlets (`lps` 0) and section take-offs (`outletLps` 0) share what is left
+after anything pinned; then each section rolls up `d.flow = takeOff +
+carried(down)`. A supply T that feeds two equal outlets therefore carries
+half down each leg, and the same on return. Pin a grille to a different
+rate when the rooms are not even; the rest re-share. A ducted FCU's supply
+and extract are the same volume twice, not one pot the grilles drink from
+together. The setting `S.settings.airVol` (`lps` | `m3h`) is only how the
+number is typed and shown. Do **not** overwrite `d.flow` with the unit
+total after the roll-up — that is what made every section show 111.
 
 Three ways to take air off, because a real drawing has all three: an outlet
 node placed where the diffuser is; a count of outlets on a section with a
@@ -223,8 +225,12 @@ Repeated fine angles re-encode the bitmap and soften it; the dialog says so.
   joint, or a corner that has been traced. The cursor is pulled to the nearest
   one and the connection is ringed and named *before* the click. Hold Alt, or
   turn the rule off in Job & defaults, to cut a joint exactly where the cursor
-  is. A joint cut into the middle of a run takes **the height the pipe is
-  actually at there** (`heightAlong()`), not the project default.
+  is. **Joint / T-piece (J)** cuts into whichever network is nearest
+  (`hitJointAt()`) — pipe or duct — so a nearby pipe does not steal a duct
+  click. The duct palette has the same T-piece. A joint cut into the middle
+  of a run takes **the height the pipe is actually at there**
+  (`heightAlong()`), not the project default. Air on a duct T-piece
+  readjusts on the next `solveDucts()`.
 - **Alt is the override key, and it means one thing: ignore the constraint in
   the way.** Over open paper it flips the corner lock, so a square job takes
   one free angle and a free-form job one square corner without changing a
@@ -270,7 +276,16 @@ Repeated fine angles re-encode the bitmap and soften it; the dialog says so.
   `connPoint()` resolves it and `syncSegEnds()` — first thing in `solve()` —
   puts every section's ends back where its units say they are, so moving,
   resizing or turning a unit carries its pipework with it and nothing else has
-  to remember to.
+  to remember to. With square corners on, `squareIntoUnit()` then keeps the
+  last hop onto a casing (indoor, condenser, BC — not a joint or an outlet)
+  horizontal or vertical, sliding or inserting a stub so the rest of the run
+  is not pulled off-square. That is refrigerant only; ductwork is left as
+  traced.
+- **The pipes of one section are a true parallel offset.** `offsetPoly()`
+  (and `offsetPoly3D()`) shifts each leg by a constant and mitres at
+  `lineHit()`. Averaging the incoming and outgoing headings was what made a
+  set flare at a corner and pinch back in on the next straight. Strokes use
+  `stroke-linejoin: miter`. Do not go back to a heading average.
 - **The connection is measured against the TRUE footprint**, `unitBoxTrue()`,
   never the legibility minimum `unitBox()` applies when zoomed out. Measure it
   against the drawn box and a connection slides as you zoom, and every length
@@ -421,9 +436,12 @@ Five minutes, and it exercises everything:
    the duty stay square to the sheet while the box turns. Change the unit type
    afterwards and confirm the hand-set size survives it.
 5. **Zoom right in and trace on to the corner of a unit**, not its middle.
-   Confirm a ring is drawn where the pipe lands, that the length is measured
-   to that corner rather than the centre, and that moving and turning the unit
-   afterwards carries the connection round with it.
+   Confirm a ring is drawn where the pipe lands, that the last hop onto the
+   casing stays horizontal or vertical (`squareIntoUnit()`), that the two or
+   three pipes stay a true parallel offset through every corner
+   (`offsetPoly()` mitres; they must not flare and pinch), that the length
+   is measured to that corner rather than the centre, and that moving and
+   turning the unit afterwards carries the connection round with it.
 6. Trace a run that **changes height mid-way** — press `]` between two clicks.
    Confirm a riser marker with the height change appears on the plan, that the
    run inspector lists a height per point, and that *Rise* on the schedule is
@@ -436,18 +454,20 @@ Five minutes, and it exercises everything:
    unit you resized and turned stands the same way there as on the plan.
 9. **Ductwork.** Put low/medium/high on a ducted unit as l/s, then toggle
    to m³/h and confirm 111 l/s reads as 400 m³/h. Tick a speed, then trace
-   a duct to three outlets. Confirm each outlet shows the **unit** figure,
-   not a third of it. Pin one outlet to a different volume and confirm the
-   other two stay at the unit figure. A size gives a velocity. Ticking
-   *Ventilated sock* reports l/s per metre. Place a controller and tick a
-   unit against it.
+   a supply duct that T-pieces to two outlets. Confirm each outlet and each
+   leg past the tee shows **half** the unit figure. Pin one outlet to a
+   different volume and confirm the other re-shares what is left, and that
+   the main rolls up the sum. Cut a T-piece (J) into a run already traced
+   and branch a third outlet; the shares must readjust. A size gives a
+   velocity. Ticking *Ventilated sock* reports l/s per metre. Place a
+   controller and tick a unit against it.
 10. **HRV.** Place an HRV. Type low/medium/high as l/s or m³/h, tick a
     speed. Trace outdoor and exhaust to louvres, supply and return to rooms.
     Confirm the sections name as `OA` / `EA` / `SA` / `RA`, not `D` / `E`.
     Drop an inline heater on the OA run — it sits in the line, not as a
-    tick. Confirm each stream carries the ticked volume (not a share of
-    it), that a duct size gives a velocity, and that a grille face gives a
-    face velocity.
+    tick. Confirm a supply T halves the air left and right (and the same
+    on return), that a duct size gives a velocity, and that a grille face
+    gives a face velocity.
     Tick *Open return* and confirm Check stops asking for an RA duct.
     Change the box size by dragging a corner. Tick the HRV on a controller.
     Run Check on an HRV-only sheet: it must come back clean without asking
