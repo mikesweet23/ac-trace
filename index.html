@@ -873,7 +873,60 @@ const PLANT_TYPES = {
   bcSingle:  { label: 'Single BC box', abbr: 'BCS', w: 0.42, d: 0.32, h: 2.90, t: 0.22, sym: 'bcs' },
   outlet:    { label: 'Outlet', abbr: 'OUT', w: 0.30, d: 0.30, h: 2.70, t: 0.10, sym: 'outlet' },
   controller:{ label: 'Controller', abbr: 'CTL', w: 0.12, d: 0.09, h: 1.40, t: 0.02, sym: 'ctl' },
+  hrv:       { label: 'HRV', abbr: 'HRV', w: 1.00, d: 0.80, h: 2.90, t: 0.35, sym: 'hrv' },
+  heater:    { label: 'Inline heater', abbr: 'HTR', w: 0.40, d: 0.25, h: 2.90, t: 0.22, sym: 'heater' },
 };
+
+/* Grille and terminal types. The face is what turns an outlet's l/s into a
+   face velocity; the footprint is only a starting size on the plan. */
+const GRILLE_TYPES = {
+  circ:    { label: 'Circular diffuser', short: 'Circ', w: 0.25, d: 0.25, face: 'circ', dia: 250, fw: 0, fh: 0, sym: 'outlet' },
+  tile600: { label: '600 × 600 diffuser', short: '600', w: 0.60, d: 0.60, face: 'rect', dia: 0, fw: 600, fh: 600, sym: 'tile' },
+  egg:     { label: 'Egg crate grille', short: 'Egg', w: 0.60, d: 0.60, face: 'rect', dia: 0, fw: 600, fh: 600, sym: 'egg' },
+  open:    { label: 'Open return', short: 'Open', w: 0.40, d: 0.40, face: 'rect', dia: 0, fw: 400, fh: 400, sym: 'openret' },
+  louvre:  { label: 'External louvre', short: 'Louv', w: 0.40, d: 0.20, face: 'rect', dia: 0, fw: 400, fh: 200, sym: 'louvre' },
+};
+const GRILLE_ORDER = ['circ', 'tile600', 'egg', 'open', 'louvre'];
+function grilleOf(n) { return GRILLE_TYPES[n && n.grille] || GRILLE_TYPES.circ; }
+/* Face area in m². Typed millimetres win; otherwise the type's own face.
+   A free-area percentage, if typed, is the only reduction — otherwise this
+   is the full face, which is the first answer and the one to check first. */
+function faceAreaM2(n) {
+  const g = grilleOf(n);
+  let area = 0;
+  if (g.face === 'circ') {
+    const dia = parseFloat(n && n.faceDia) || g.dia || 0;
+    area = Math.PI * Math.pow(dia / 2000, 2);
+  } else {
+    const w = parseFloat(n && n.faceW) || g.fw || 0;
+    const h = parseFloat(n && n.faceH) || g.fh || 0;
+    area = (w / 1000) * (h / 1000);
+  }
+  const pct = parseFloat(n && n.freePct);
+  if (pct > 0 && pct <= 100) area *= pct / 100;
+  return area;
+}
+function faceVelOf(n) {
+  const a = faceAreaM2(n);
+  return a > 0 ? ((parseFloat(n && n.flow) || 0) / 1000) / a : 0;
+}
+function faceSizeLabel(n) {
+  const g = grilleOf(n);
+  if (g.face === 'circ') {
+    const dia = parseFloat(n && n.faceDia) || g.dia;
+    return dia ? ('Ø' + fmt(dia, 0)) : '';
+  }
+  const w = parseFloat(n && n.faceW) || g.fw;
+  const h = parseFloat(n && n.faceH) || g.fh;
+  return (w && h) ? (fmt(w, 0) + ' × ' + fmt(h, 0)) : '';
+}
+
+/* Duct velocity from the typed size; face velocity from the grille.
+   Both get a low and a high, because a duct that is too large is as wrong
+   as one that will whistle. These are conventions, not limits. */
+const VEL_DUCT_LO = 2.0, VEL_DUCT_HI = 8.0;
+const VEL_FACE_LO = 1.0, VEL_FACE_HI = 3.0;
+const BALANCE_TOL = 0.10;
 
 /* ==========================================================================
    THE PIPES
@@ -943,14 +996,26 @@ function insulationOf(sg) {
    from the pipework — its own runs, its own naming, its own schedule — because
    the two are different trades reading different figures off the same sheet.
 
-   These two colours belong to ductwork and nothing else, the same way the
-   three refrigerant lines own theirs.
+   Four colours belong to the four airs and nothing else, the same way the
+   three refrigerant lines own theirs. A ducted FCU still uses supply and
+   extract (SA / EA). An HRV uses all four.
    ========================================================================== */
 const DUCT_KINDS = {
-  supply:  { label: 'Supply', short: 'SA', colour: '#2f8f7a' },
-  extract: { label: 'Extract', short: 'EA', colour: '#8c5bb8' },
+  oa: { label: 'Outdoor air', short: 'OA', colour: '#1a7a6d' },
+  ea: { label: 'Exhaust',     short: 'EA', colour: '#8c5bb8' },
+  sa: { label: 'Supply',      short: 'SA', colour: '#2f8f7a' },
+  ra: { label: 'Return',      short: 'RA', colour: '#c17a3a' },
 };
-const DUCT_KIND_ORDER = ['supply', 'extract'];
+const DUCT_KIND_ORDER = ['oa', 'ea', 'sa', 'ra'];
+/* Older files stored supply / extract. Read them as SA / EA and keep writing
+   the four-letter keys, so a schedule never grows a second pair of names. */
+const DUCT_KIND_ALIAS = { supply: 'sa', extract: 'ea', fresh: 'oa', return: 'ra' };
+function ductKind(k) {
+  const key = DUCT_KIND_ALIAS[k] || k;
+  return DUCT_KINDS[key] ? key : 'sa';
+}
+function ductKindOf(x) { return ductKind(x && x.kind); }
+function ductKindDef(x) { return DUCT_KINDS[ductKindOf(x)]; }
 
 /* Round or rectangular, in millimetres, because that is how ductwork is
    drawn and ordered. The area is what turns a volume into a velocity. */
@@ -1029,6 +1094,7 @@ const S = {
     defaultKw: 3.5,
     insulation: '1/2',           // the wall a section gets unless it says otherwise
     ductHeight: 3.40,            // ductwork sits above the refrigerant pipe by default
+    hrvHeight: 2.90,             // HRV and inline heater, ceiling void
     ductVel: 4.0,                // the velocity the size helper aims at, m/s
     defaultDuctShape: 'circ',
   },
@@ -1174,6 +1240,8 @@ function heightOf(n) {
   return n.type === 'condenser' ? S.settings.condenserHeight
        : n.type === 'indoor'    ? S.settings.indoorHeight
        : n.type === 'bc'        ? S.settings.bcHeight
+       : n.type === 'hrv' || n.type === 'heater' ? (S.settings.hrvHeight || 2.90)
+       : n.type === 'outlet' || n.type === 'djoint' ? (S.settings.ductHeight || S.settings.pipeHeight)
        : S.settings.pipeHeight;
 }
 /* The height of point i of a run: its own if it has one, otherwise the run's
@@ -1292,7 +1360,9 @@ function pipesOf(sg) {
 const NAMING_NOTE =
   'M1, M2 &hellip; mains from a condenser &middot; B1, B2 &hellip; branches off a main &middot; '
 + 'B1a, B1b &hellip; sub-branches off a branch &middot; a run cut into sections by the joints '
-+ 'along it is numbered from the condenser, M1.1, M1.2 &middot; X1 anything not connected';
++ 'along it is numbered from the condenser, M1.1, M1.2 &middot; X1 anything not connected. '
++ 'Ductwork off a ducted unit is D and E. HRV ducts are OA, EA, SA, RA — never D — so a '
++ 'schedule cannot mix a ventilation main with an FCU run.';
 
 const LETTERS = 'abcdefghijklmnopqrstuvwxyz';
 
@@ -1488,12 +1558,19 @@ function autoUnits(d) {
 }
 
 function solveDucts() {
-  const roots = S.nodes.filter(n => n.type === 'indoor' && n.unit === 'ducted');
-  S.nodes.forEach(n => { if (n.type === 'outlet' || n.type === 'djoint') { n.reached = false; n.unitId = null; } });
+  const roots = S.nodes.filter(isAirRoot);
+  S.nodes.forEach(n => {
+    if (n.type === 'outlet' || n.type === 'djoint' || n.type === 'heater') {
+      n.reached = false; n.unitId = null;
+    }
+    if (n.type === 'hrv') n.reached = true;
+    if (n.type === 'outlet') { n.flow = 0; n.auto = true; n.faceVel = 0; n.faceArea = 0; }
+  });
   S.ducts.forEach(d => {
     d.up = null; d.down = null; d.orphan = true; d.unitId = null;
     d.routeM = 0; d.riseM = 0; d.lengthM = 0;
     d.flow = 0; d.takeOff = 0; d.vel = 0; d.perOutlet = 0; d.perMetre = 0;
+    d.kind = ductKind(d.kind);
   });
 
   roots.forEach(root => {
@@ -1513,7 +1590,6 @@ function solveDucts() {
   });
   S.ducts.forEach(d => { if (d.up === null) { d.up = d.a; d.down = d.b; } });
 
-  // lengths, the same way pipework measures them
   S.ducts.forEach(d => {
     d.routeM = ductLenM(d);
     const r = riseBreakdown(d);
@@ -1522,13 +1598,13 @@ function solveDucts() {
     d.area = ductArea(d);
   });
 
-  /* Share the unit's volume out: anything pinned to a figure is taken first,
-     and what is left is divided evenly between everything set to share. */
-  roots.forEach(root => {
-    const mine = S.ducts.filter(d => d.unitId === root.id);
-    const outletNodes = S.nodes.filter(n => n.type === 'outlet' && n.unitId === root.id);
-    const total = designFlow(root);
-
+  /* Share per stream, not across the whole unit. An HRV has four ports and
+     each carries the design volume; a ducted FCU's supply and extract are
+     the same volume twice, not one pot the grilles drink from together. */
+  const shareStream = (root, mineAll, kind, total) => {
+    const mine = mineAll.filter(d => ductKindOf(d) === kind);
+    const outletNodes = S.nodes.filter(n =>
+      n.type === 'outlet' && n.unitId === root.id && ductKindOf(n) === kind);
     let fixed = 0, shares = 0;
     outletNodes.forEach(o => {
       const v = parseFloat(o.lps) || 0;
@@ -1540,7 +1616,6 @@ function solveDucts() {
     });
     const spare = Math.max(0, total - fixed);
     const per = shares > 0 ? spare / shares : 0;
-
     outletNodes.forEach(o => {
       const v = parseFloat(o.lps) || 0;
       o.flow = v > 0 ? v : per;
@@ -1554,10 +1629,18 @@ function solveDucts() {
       d.perOutlet = d.nOutlets > 0 ? d.takeOff / d.nOutlets : 0;
       d.perMetre = d.sock && d.lengthM > 0.01 ? d.takeOff / d.lengthM : 0;
     });
+    return { mine, outletNodes };
+  };
 
-    /* What each section carries is everything it delivers downstream plus
-       whatever comes off along it — the figure at the section's inlet, which
-       is the one a duct is sized on. */
+  roots.forEach(root => {
+    const mine = S.ducts.filter(d => d.unitId === root.id);
+    const total = designFlow(root);
+    const kinds = {};
+    mine.forEach(d => { kinds[ductKindOf(d)] = true; });
+    S.nodes.filter(n => n.type === 'outlet' && n.unitId === root.id)
+      .forEach(o => { kinds[ductKindOf(o)] = true; });
+    Object.keys(kinds).forEach(k => shareStream(root, mine, k, total));
+
     const carried = nodeId => {
       let q = 0;
       const o = nodeById(nodeId);
@@ -1574,12 +1657,39 @@ function solveDucts() {
     });
   });
 
+  S.nodes.filter(n => n.type === 'outlet').forEach(o => {
+    o.kind = ductKind(o.kind);
+    o.faceArea = faceAreaM2(o);
+    o.faceVel = faceVelOf(o);
+  });
+
   S.ductSystems = roots.map(root => {
     const mine = S.ducts.filter(d => d.unitId === root.id);
     const outs = S.nodes.filter(n => n.type === 'outlet' && n.unitId === root.id);
     const sectionOutlets = mine.reduce((t, d) => t + (d.nOutlets || 0), 0);
+    const streams = {};
+    DUCT_KIND_ORDER.forEach(k => {
+      const sd = mine.filter(d => ductKindOf(d) === k);
+      const so = outs.filter(o => ductKindOf(o) === k);
+      const delivered = so.reduce((t, o) => t + (o.flow || 0), 0)
+        + sd.reduce((t, d) => t + (d.takeOff || 0), 0);
+      streams[k] = {
+        ducts: sd, outlets: so, delivered,
+        nOutlets: so.length + sd.reduce((t, d) => t + (d.nOutlets || 0), 0),
+        maxVel: sd.reduce((m, d) => Math.max(m, d.vel || 0), 0),
+        lengthM: sd.reduce((t, d) => t + d.lengthM, 0),
+      };
+    });
+    const rooms = {};
+    outs.forEach(o => {
+      const room = String(o.room || '').trim() || '(no room)';
+      const row = rooms[room] || (rooms[room] = { room, sa: 0, ra: 0, ea: 0, oa: 0 });
+      row[ductKindOf(o)] = (row[ductKindOf(o)] || 0) + (o.flow || 0);
+    });
     return {
-      unit: root, ducts: mine, outlets: outs,
+      unit: root, ducts: mine, outlets: outs, streams, rooms: Object.keys(rooms).map(k => rooms[k]),
+      plant: root.type === 'hrv' ? 'hrv' : 'ducted',
+      openReturn: !!(root.type === 'hrv' && root.openReturn),
       total: designFlow(root), speed: designSpeed(root),
       pa: fanAt(root, designSpeed(root)).p,
       lengthM: mine.reduce((t, d) => t + d.lengthM, 0),
@@ -1622,6 +1732,8 @@ function totals() {
     outlets: S.nodes.filter(n => n.type === 'outlet').length
              + S.ducts.reduce((t, d) => t + (d.nOutlets || 0), 0),
     controllers: S.nodes.filter(n => n.type === 'controller').length,
+    hrv: S.nodes.filter(n => n.type === 'hrv').length,
+    heaters: S.nodes.filter(n => n.type === 'heater').length,
     airLps: (S.ductSystems || []).reduce((t, x) => t + x.total, 0),
     sized: segs.filter(s => linesFor(s.pipes).every(kk => s[SIZE_FIELD[kk]])).length,
     unreached: S.nodes.filter(n => (n.type === 'indoor' || n.type === 'bc') && !n.reached).length,
@@ -1690,18 +1802,27 @@ function unitDef(n) {
   if (n.type === 'condenser') return PLANT_TYPES.condenser;
   if (n.type === 'bc') return n.kind === 'single' ? PLANT_TYPES.bcSingle : PLANT_TYPES.bcMain;
   if (n.type === 'indoor') return INDOOR_TYPES[n.unit] || INDOOR_TYPES.cass600;
-  if (n.type === 'outlet') return PLANT_TYPES.outlet;
+  if (n.type === 'hrv') return PLANT_TYPES.hrv;
+  if (n.type === 'heater') return PLANT_TYPES.heater;
+  if (n.type === 'outlet') {
+    const g = grilleOf(n);
+    return { label: g.label, abbr: g.short, w: g.w, d: g.d, h: 2.70, t: 0.08, sym: g.sym || 'outlet' };
+  }
   if (n.type === 'controller') return PLANT_TYPES.controller;
   return null;
 }
 /* Which network a node belongs to. Pipework must not snap to a diffuser and
-   ductwork must not snap to a BC box; a controller is on neither. */
+   ductwork must not snap to a BC box; a controller is on neither. An HRV is
+   air-side plant only — never on the refrigerant network. */
 const PIPE_NODES = ['condenser', 'indoor', 'bc', 'branch'];
-const DUCT_NODES = ['indoor', 'outlet', 'djoint'];
+const DUCT_NODES = ['indoor', 'outlet', 'djoint', 'hrv', 'heater'];
 function inNet(n, net) {
   if (net === 'duct') return DUCT_NODES.indexOf(n.type) >= 0
     && (n.type !== 'indoor' || n.unit === 'ducted');
   return PIPE_NODES.indexOf(n.type) >= 0;
+}
+function isAirRoot(n) {
+  return n && ((n.type === 'indoor' && n.unit === 'ducted') || n.type === 'hrv');
 }
 const MIN_FOOT_M = 0.08;
 /* The footprint in real metres: set by hand if it has been, otherwise the
@@ -2091,7 +2212,7 @@ function drawDuct(g, d, k) {
   const picked = sel && sel.kind === 'duct' && sel.id === d.id;
   const pts = d.pts;
   if (!pts || pts.length < 2) return;
-  const col = (DUCT_KINDS[d.kind] || DUCT_KINDS.supply).colour;
+  const col = ductKindDef(d).colour;
   const path = pathOf(pts);
   // a band whose width follows the duct size once one has been given
   const wPx = d.area > 0 && S.pxPerM > 0
@@ -2152,7 +2273,7 @@ function drawDuct(g, d, k) {
    indoor units are white with a coloured edge by type, which is what makes
    the two readable apart at a glance on a busy layout.
    ========================================================================== */
-const NODE_EDGE_EXTRA = { outlet: '#2f8f7a', controller: '#6c7ae0' };
+const NODE_EDGE_EXTRA = { outlet: '#2f8f7a', controller: '#6c7ae0', hrv: '#2a6b5a', heater: '#b85c38' };
 const INDOOR_EDGE = {
   wall:    '#2f8f5b',
   cass900: '#6c7ae0',
@@ -2219,12 +2340,50 @@ function drawUnitGlyph(g, sym, x, y, w, h, colour, k) {
     });
     return;
   }
-  if (sym === 'outlet') {
+  if (sym === 'outlet' || sym === 'tile' || sym === 'egg' || sym === 'openret' || sym === 'louvre') {
     const r = Math.min(w, h) * 0.34;
+    if (sym === 'louvre') {
+      for (let i = -2; i <= 2; i++) {
+        S2('M ' + (cx - r) + ' ' + (cy + i * r * 0.35) + ' H ' + (cx + r));
+      }
+      return;
+    }
+    if (sym === 'openret') {
+      g.appendChild(mk('rect', { x: cx - r, y: cy - r, width: r * 2, height: r * 2,
+        fill: 'none', stroke: colour, 'stroke-width': 1.2 * k, 'stroke-dasharray': (2 * k) + ' ' + (2 * k) }));
+      return;
+    }
+    if (sym === 'tile' || sym === 'egg') {
+      g.appendChild(mk('rect', { x: cx - r, y: cy - r, width: r * 2, height: r * 2,
+        fill: 'none', stroke: colour, 'stroke-width': 1.2 * k }));
+      if (sym === 'egg') {
+        S2('M ' + (cx - r) + ' ' + cy + ' H ' + (cx + r));
+        S2('M ' + cx + ' ' + (cy - r) + ' V ' + (cy + r));
+      }
+      return;
+    }
     [-1, 0, 1].forEach(i => {
       const px = cx + i * r * 0.7;
       S2('M ' + px + ' ' + (cy - r) + ' V ' + (cy + r));
     });
+    return;
+  }
+  if (sym === 'hrv') {
+    g.appendChild(mk('rect', { x: cx - w * 0.28, y: cy - h * 0.20, width: w * 0.56, height: h * 0.40,
+      fill: 'none', stroke: colour, 'stroke-width': 1.2 * k }));
+    S2('M ' + (cx - w * 0.22) + ' ' + (cy - h * 0.06) + ' L ' + (cx + w * 0.22) + ' ' + (cy + h * 0.10));
+    S2('M ' + (cx - w * 0.22) + ' ' + (cy + h * 0.10) + ' L ' + (cx + w * 0.22) + ' ' + (cy - h * 0.06));
+    S2('M ' + (cx - w * 0.34) + ' ' + (cy - h * 0.06) + ' H ' + (cx - w * 0.28));
+    S2('M ' + (cx + w * 0.28) + ' ' + (cy + h * 0.10) + ' H ' + (cx + w * 0.34));
+    return;
+  }
+  if (sym === 'heater') {
+    S2('M ' + (cx - w * 0.30) + ' ' + cy
+      + ' l ' + (w * 0.10) + ' ' + (-h * 0.16)
+      + ' l ' + (w * 0.10) + ' ' + (h * 0.32)
+      + ' l ' + (w * 0.10) + ' ' + (-h * 0.32)
+      + ' l ' + (w * 0.10) + ' ' + (h * 0.32)
+      + ' l ' + (w * 0.10) + ' ' + (-h * 0.16));
     return;
   }
   if (sym === 'ctl') {
@@ -2256,7 +2415,7 @@ function drawNode(g, n, k) {
     if (picked) g.appendChild(mk('circle', { cx: n.x, cy: n.y, r: r + 4 * k, fill: 'none',
       stroke: 'var(--measure)', 'stroke-width': 2.4 * k }));
     g.appendChild(mk('circle', { cx: n.x, cy: n.y, r, fill: 'var(--white)',
-      stroke: duct ? DUCT_KINDS.supply.colour : 'var(--graphite)', 'stroke-width': 2 * k }));
+      stroke: duct ? DUCT_KINDS.sa.colour : 'var(--graphite)', 'stroke-width': 2 * k }));
     if (S.settings.showHeights !== false) {
       g.appendChild(mk('text', { x: n.x, y: n.y - 9 * k, 'text-anchor': 'middle',
         'font-size': 8 * k, 'font-family': 'Azeret Mono, monospace',
@@ -2274,10 +2433,12 @@ function drawNode(g, n, k) {
 
   const edge = cond ? 'var(--graphite)'
              : bc ? '#5a5d68'
-             : n.type === 'outlet' ? (DUCT_KINDS[n.kind] || DUCT_KINDS.supply).colour
+             : n.type === 'outlet' ? ductKindDef(n).colour
+             : n.type === 'hrv' ? NODE_EDGE_EXTRA.hrv
+             : n.type === 'heater' ? NODE_EDGE_EXTRA.heater
              : n.type === 'controller' ? NODE_EDGE_EXTRA.controller
              : (INDOOR_EDGE[n.unit] || '#4a9fd8');
-  const fill = cond ? 'var(--graphite)' : (n.reached ? 'var(--white)' : '#fdecea');
+  const fill = cond ? 'var(--graphite)' : (n.reached || n.type === 'hrv' ? 'var(--white)' : '#fdecea');
   const stroke = cond ? 'var(--graphite)' : (n.reached ? edge : 'var(--alarm)');
 
   /* The box, its edge band and its glyph turn together; everything written
@@ -2326,9 +2487,19 @@ function drawNode(g, n, k) {
     if (S.settings.showKw !== false && parseFloat(n.kw) > 0) bits.push(fmt(parseFloat(n.kw), 1) + ' kW');
   } else if (bc) {
     bits.push(n.kind === 'single' ? 'BC single' : 'BC controller');
+  } else if (n.type === 'hrv') {
+    bits.push('HRV');
+    if (designFlow(n) > 0) bits.push(fmt(designFlow(n), 0) + ' l/s');
+    if (n.openReturn) bits.push('open ret');
+  } else if (n.type === 'heater') {
+    bits.push('Heater');
+    if (parseFloat(n.kw) > 0) bits.push(fmt(parseFloat(n.kw), 1) + ' kW');
   } else if (n.type === 'outlet') {
-    bits.push((DUCT_KINDS[n.kind] || DUCT_KINDS.supply).short);
+    bits.push(ductKindDef(n).short);
+    const g = grilleOf(n);
+    if (g.short) bits.push(g.short);
     if (n.flow > 0) bits.push(fmt(n.flow, 0) + ' l/s' + (n.auto ? '' : ' set'));
+    if (n.faceVel > 0.05) bits.push(fmt(n.faceVel, 1) + ' m/s');
   } else if (n.type === 'controller') {
     bits.push((CONTROLLER_KINDS[n.kind] || CONTROLLER_KINDS.local).abbr);
     if ((n.serves || []).length) bits.push(plural(n.serves.length, 'unit'));
@@ -2344,10 +2515,10 @@ function drawNode(g, n, k) {
       fill: 'var(--ink-soft)' }, t));
   }
 
-  if (!cond && !n.reached && n.type !== 'controller') {
+  if (!cond && !n.reached && n.type !== 'controller' && n.type !== 'hrv') {
     g.appendChild(mk('text', { x: n.x, y: n.y + yTop - 16 * k, 'text-anchor': 'middle',
       'font-size': 8.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 700,
-      fill: 'var(--alarm)' }, n.type === 'outlet' ? 'NOT DUCTED' : 'NOT PIPED'));
+      fill: 'var(--alarm)' }, (n.type === 'outlet' || n.type === 'heater') ? 'NOT DUCTED' : 'NOT PIPED'));
   }
 
   /* A controller's leaders are drawn only while it is selected. Drawing every
@@ -2396,12 +2567,13 @@ function drawHandles(g, n, k, b) {
 }
 
 /* ---------- ghosts drawn before the click ---------- */
-const PLACE_TOOLS = ['condenser', 'indoor', 'bc', 'outlet', 'ctl'];
+const PLACE_TOOLS = ['condenser', 'indoor', 'bc', 'outlet', 'ctl', 'hrv'];
 
 function drawPlaceGhost(g, k) {
-  const type = tool === 'ctl' ? 'controller' : tool;
+  const type = tool === 'ctl' ? 'controller' : tool === 'hrv' ? armedHrv : tool;
   const n = { type, unit: armedIndoor, x: hoverPt.x, y: hoverPt.y,
-    kind: tool === 'bc' ? armedBc : tool === 'outlet' ? armedOutlet : armedCtl };
+    kind: tool === 'bc' ? armedBc : tool === 'outlet' ? armedOutlet : armedCtl,
+    grille: tool === 'outlet' ? armedGrille : undefined };
   const b = unitBox(n, k);
   g.appendChild(mk('rect', { x: n.x - b.w / 2, y: n.y - b.d / 2, width: b.w, height: b.d,
     rx: 2.5 * k, fill: 'rgba(108,122,224,.14)', stroke: 'var(--measure)',
@@ -2459,6 +2631,7 @@ function renderStatus() {
     orthoNow() ? 'square' : 'free');
   html += cell('Systems', String(t.condensers));
   html += cell('Indoor units', String(t.indoors));
+  if (t.hrv) html += cell('HRV', String(t.hrv));
   html += cell('Route one way', fmt(t.lengthM, 1) + ' m');
   html += cell('Pipe total', fmt(t.pipeM, 1) + ' m');
   if (t.sections) html += cell('Sized', t.sized + ' / ' + t.sections, t.sized < t.sections);
@@ -2483,11 +2656,12 @@ const TOOLS = [
   { id: 'duct',      label: 'Duct',   key: 'D', icon: 'M2 6h16M2 14h16M7 6v8M13 6v8' },
   { id: 'outlet',    label: 'Outlet', key: 'O', icon: 'M4 4h12v12H4zM7 7v6M10 7v6M13 7v6' },
   { id: 'ctl',       label: 'Control', key: 'K', icon: 'M5 3h10v14H5zM8 6h4M8 9h4M9 13h2' },
+  { id: 'hrv',       label: 'HRV',    key: 'R', icon: 'M3 6h14v8H3zM7 8l3 2-3 2M13 8l-3 2 3 2' },
 ];
 
 /* Nothing can be placed or traced until the drawing has a scale: a length
    measured off an uncalibrated drawing means nothing at all. */
-const NEEDS_SCALE = ['condenser', 'indoor', 'bc', 'trace', 'joint', 'duct', 'outlet', 'ctl'];
+const NEEDS_SCALE = ['condenser', 'indoor', 'bc', 'trace', 'joint', 'duct', 'outlet', 'ctl', 'hrv'];
 
 let armedIndoor = 'cass600';
 let armedBc = 'main';
@@ -2527,12 +2701,12 @@ const HINTS = {
   pan: 'Drag to move around the drawing.',
   joint: 'Click along a pipe run or a duct to cut a branch joint into it, then trace on from it. '
        + 'While tracing, holding <kbd>Alt</kbd> does the same thing in one go.',
-  duct: 'Click where the duct starts &mdash; on a ducted unit to run its air, or anywhere on the sheet &mdash; '
-      + 'then click along it. Finish on an outlet or a joint, or <b>double-click</b> to stop where you are. '
-      + 'Click an existing duct to branch off it.',
-  outlet: 'Click where a diffuser or grille sits, or on the open end of a duct to turn it into one. '
-      + 'Leave its volume at 0 and it takes an even share of whatever the unit has left.',
-  ctl: 'Click where the controller sits. Tick the units it drives in the inspector afterwards.',
+  duct: 'Start on a ducted unit or an HRV, or anywhere on the sheet. Finish on an outlet, '
+      + 'a heater or a joint, or <b>double-click</b> to stop. Pick the air (OA, EA, SA, RA) first.',
+  outlet: 'Click where a grille sits, or on the open end of a duct to turn it into one. '
+      + 'Pick the air and the grille first. Leave volume at 0 for an even share.',
+  ctl: 'Click where the controller sits. Tick the indoor units and HRVs it drives afterwards.',
+  hrv: 'Pick HRV or inline heater, then click. A heater dropped on a duct sits in that run.',
 };
 
 /* ---------- the override key ----------
@@ -2565,7 +2739,7 @@ function setTool(t) {
   h.classList.toggle('trace', t === 'trace' || t === 'duct');
   el('orthoChk').checked = !!S.settings.ortho;
   el('hgtIn').value = fmt(activeHeight(), 2);
-  const pal = ['indoor', 'bc', 'condenser', 'outlet', 'duct', 'ctl'].indexOf(t) >= 0;
+  const pal = ['indoor', 'bc', 'condenser', 'outlet', 'duct', 'ctl', 'hrv'].indexOf(t) >= 0;
   el('vpal').classList.toggle('on', pal);
   if (pal) buildPalette();
   render();
@@ -2621,6 +2795,26 @@ function buildPalette() {
         + '<span class="vsym" data-sym="outlet" style="color:' + d.colour + '"></span>'
         + '<span class="vlbl">' + esc(d.label) + '<em>' + d.short + '</em></span></button>';
     }).join('');
+    if (tool === 'outlet') {
+      html += '<div class="vgrp">Grille</div>' + GRILLE_ORDER.map(k2 => {
+        const g = GRILLE_TYPES[k2];
+        return '<button class="vitem' + (armedGrille === k2 ? ' on' : '') + '" data-grille="' + k2 + '">'
+          + '<span class="vsym" data-sym="' + g.sym + '"></span>'
+          + '<span class="vlbl">' + esc(g.label) + '<em>'
+          + (g.face === 'circ' ? 'Ø' + g.dia : g.fw + ' × ' + g.fh) + ' mm</em></span></button>';
+      }).join('');
+    }
+  } else if (tool === 'hrv') {
+    el('vpalTitle').textContent = 'Heat recovery';
+    el('vpalSub').textContent = 'click the plan to place';
+    html = '<div class="vgrp">Plant</div>'
+      + [['hrv', PLANT_TYPES.hrv, 'Standalone heat-recovery unit. Four air streams: outdoor, exhaust, supply and return. Not on a refrigerant system.'],
+         ['heater', PLANT_TYPES.heater, 'Electric heater in the outdoor-air run. Drop it on a duct to sit in line.']]
+        .map(([k, d, note]) =>
+          '<button class="vitem' + (armedHrv === k ? ' on' : '') + '" data-hrv="' + k + '" '
+          + 'title="' + esc(note) + '"><span class="vsym" data-sym="' + d.sym + '"></span>'
+          + '<span class="vlbl">' + esc(d.label) + '<em>' + fmt(d.w, 2) + ' × ' + fmt(d.d, 2)
+          + ' m</em></span></button>').join('');
   } else if (tool === 'ctl') {
     el('vpalTitle').textContent = 'Controllers';
     el('vpalSub').textContent = 'click the plan to place';
@@ -2660,6 +2854,10 @@ function buildPalette() {
     }));
   box.querySelectorAll('[data-ctl]').forEach(b =>
     b.addEventListener('click', () => { armedCtl = b.dataset.ctl; buildPalette(); render(); }));
+  box.querySelectorAll('[data-hrv]').forEach(b =>
+    b.addEventListener('click', () => { armedHrv = b.dataset.hrv; buildPalette(); render(); }));
+  box.querySelectorAll('[data-grille]').forEach(b =>
+    b.addEventListener('click', () => { armedGrille = b.dataset.grille; buildPalette(); render(); }));
   el('vpalKw').checked = S.settings.showKw !== false;
 }
 
@@ -2703,9 +2901,11 @@ function addBc(p) {
   render();
 }
 
-let armedOutlet = 'supply';
-let armedDuct = 'supply';
+let armedOutlet = 'sa';
+let armedDuct = 'sa';
 let armedCtl = 'local';
+let armedHrv = 'hrv';
+let armedGrille = 'circ';
 
 function addOutlet(p) {
   /* A duct finished in mid-air leaves a joint on its end. Dropping an outlet
@@ -2716,8 +2916,9 @@ function addOutlet(p) {
   if (hit && hit.type === 'djoint') {
     pushUndo('make ' + (segName(ductNeighbours(hit.id)[0]) || 'the duct') + ' end at an outlet');
     hit.type = 'outlet';
-    hit.name = nextName(armedOutlet === 'extract' ? 'EA' : 'SA');
-    hit.kind = armedOutlet;
+    hit.name = nextName(DUCT_KINDS[ductKind(armedOutlet)].short);
+    hit.kind = ductKind(armedOutlet);
+    hit.grille = armedGrille;
     hit.model = ''; hit.lps = 0;
     select('node', hit.id);
     render();
@@ -2725,9 +2926,56 @@ function addOutlet(p) {
     return;
   }
   pushUndo('add outlet');
+  const g = GRILLE_TYPES[armedGrille] || GRILLE_TYPES.circ;
   const n = { id: nid(), type: 'outlet', x: p.x, y: p.y,
-    name: nextName(armedOutlet === 'extract' ? 'EA' : 'SA'),
-    kind: armedOutlet, model: '', lps: 0, height: S.settings.indoorHeight };
+    name: nextName(DUCT_KINDS[ductKind(armedOutlet)].short),
+    kind: ductKind(armedOutlet), grille: armedGrille, model: '', lps: 0,
+    height: S.settings.indoorHeight };
+  S.nodes.push(n);
+  select('node', n.id);
+  render();
+}
+function addHrv(p) {
+  pushUndo('add HRV');
+  const def = PLANT_TYPES.hrv;
+  const n = { id: nid(), type: 'hrv', x: p.x, y: p.y,
+    name: nextName('HRV'), model: '', height: S.settings.hrvHeight || def.h,
+    openReturn: false, fanSpeed: 'high' };
+  S.nodes.push(n);
+  select('node', n.id);
+  render();
+}
+function addHeater(p) {
+  const hit = hitNode(p, 16);
+  if (hit && hit.type === 'djoint') {
+    pushUndo('make the joint an inline heater');
+    hit.type = 'heater';
+    hit.name = nextName('HTR');
+    hit.model = ''; hit.kw = 0;
+    select('node', hit.id);
+    render();
+    toast('Heater on the duct');
+    return;
+  }
+  const hd = hitSeg(p, 18, 'duct');
+  if (hd) {
+    pushUndo('put a heater on ' + segName(hd.seg));
+    undoSuspended = true;
+    const j = splitSegment(hd.seg, hd.r, 'duct');
+    j.type = 'heater';
+    j.name = nextName('HTR');
+    j.model = ''; j.kw = 0;
+    undoSuspended = false; refreshUndoBtn();
+    if (S.settings.autoName !== false) autoNameDucts(true);
+    select('node', j.id);
+    render();
+    toast('Heater on ' + segName(hd.seg));
+    return;
+  }
+  pushUndo('add inline heater');
+  const n = { id: nid(), type: 'heater', x: p.x, y: p.y,
+    name: nextName('HTR'), model: '', kw: 0,
+    height: S.settings.hrvHeight || PLANT_TYPES.heater.h };
   S.nodes.push(n);
   select('node', n.id);
   render();
@@ -2752,7 +3000,7 @@ function finishDuct(endNode, endOff) {
     id: nid(), a: draft.startNode, b: endNode, pts,
     aOff: draft.startOff || null, bOff: endOff || null,
     ref: 'Duct ' + (S.ducts.length + 1), name: '',
-    kind: armedDuct, shape: S.settings.defaultDuctShape || 'circ',
+    kind: ductKind(armedDuct), shape: S.settings.defaultDuctShape || 'circ',
     dia: 0, w: 0, h: 0, outlets: 0, outletLps: 0, sock: false,
     height: null, extraRise: 0, note: '',
   };
@@ -2764,31 +3012,51 @@ function finishDuct(endNode, endOff) {
   toast(segName(d) + ' — ' + fmt(d.routeM || ductLenM(d), 1) + ' m of duct');
 }
 
-/* Ductwork is named off the unit it serves: D1, D2 … mains from the unit,
-   cut into D1.1, D1.2 by the joints along them, and E1, E2 … the branches
-   off them. Kept apart from the pipework's M and B so a schedule can never
-   confuse a duct with a refrigerant line. */
+/* Ductwork off a ducted FCU keeps D and E. HRV ducts are named by stream —
+   OA, EA, SA, RA — so a schedule can never mint a second D1. Counters run
+   across the whole drawing, the same rule as the pipework. */
 function autoNameDucts(quiet) {
   solveDucts();
-  let m = 0, b = 0;
   const runs = {};
-  const walk = (nodeId, runName, level) => {
-    const outs = S.ducts.filter(d => d.up === nodeId && !d.orphan);
+  const mark = (d, name) => {
+    d.ref = name;
+    (runs[name] = runs[name] || []).push(d);
+  };
+  const walkKind = (nodeId, runName, level, kind, nextMain, nextBr) => {
+    const outs = S.ducts.filter(d => d.up === nodeId && !d.orphan && ductKindOf(d) === kind);
     outs.sort((x, y) => (y.flow || 0) - (x.flow || 0));
     let sub = 0;
     outs.forEach((d, i) => {
       let name, lvl;
-      if (!runName) { name = 'D' + (++m); lvl = 0; }
+      if (!runName) { name = nextMain(); lvl = 0; }
       else if (i === 0) { name = runName; lvl = level; }
-      else if (level === 0) { name = 'E' + (++b); lvl = 1; }
+      else if (level === 0) { name = nextBr(); lvl = 1; }
       else { name = runName + LETTERS[sub++ % 26]; lvl = 2; }
-      d.ref = name;
-      (runs[name] = runs[name] || []).push(d);
+      mark(d, name);
       const dn = nodeById(d.down);
-      if (dn && dn.type !== 'outlet') walk(dn.id, name, lvl);
+      if (dn && dn.type !== 'outlet') walkKind(dn.id, name, lvl, kind, nextMain, nextBr);
     });
   };
-  S.nodes.filter(n => n.type === 'indoor' && n.unit === 'ducted').forEach(u => walk(u.id, null, -1));
+
+  const streamN = { oa: 0, ea: 0, sa: 0, ra: 0 };
+  S.nodes.filter(n => n.type === 'hrv').forEach(u => {
+    DUCT_KIND_ORDER.forEach(k => {
+      const short = DUCT_KINDS[k].short;
+      walkKind(u.id, null, -1, k,
+        () => short + (++streamN[k]),
+        () => short + (++streamN[k]));
+    });
+  });
+
+  let m = 0, b = 0;
+  S.nodes.filter(n => n.type === 'indoor' && n.unit === 'ducted').forEach(u => {
+    DUCT_KIND_ORDER.forEach(k => {
+      walkKind(u.id, null, -1, k,
+        () => 'D' + (++m),
+        () => 'E' + (++b));
+    });
+  });
+
   Object.keys(runs).forEach(ref => {
     const list = runs[ref];
     if (list.length < 2) return;
@@ -2797,7 +3065,7 @@ function autoNameDucts(quiet) {
   let o = 0;
   S.ducts.filter(d => d.orphan).forEach(d => { d.ref = 'XD' + (++o); });
   solve();
-  if (!quiet) { render(); toast('Ducts renamed — D mains from the unit, E branches'); }
+  if (!quiet) { render(); toast('Ducts renamed — OA/EA/SA/RA on an HRV, D/E off a ducted unit'); }
 }
 
 /* The height of a run at a fraction along it, so a joint cut into the middle
@@ -2864,6 +3132,8 @@ function nodeWord(n) {
   return n.type === 'condenser' ? 'condenser'
        : n.type === 'indoor' ? 'indoor unit'
        : n.type === 'bc' ? (n.kind === 'single' ? 'BC box' : 'BC controller')
+       : n.type === 'hrv' ? 'HRV'
+       : n.type === 'heater' ? 'inline heater'
        : n.type === 'outlet' ? 'outlet'
        : n.type === 'controller' ? 'controller'
        : n.type === 'djoint' ? 'duct joint'
@@ -3047,6 +3317,18 @@ function deleteSelected() {
   const n = nodeById(sel.id);
   if (!n) return;
 
+  /* A heater sitting in line between two ducts heals the run the same way
+     a pipe joint does — it was a box on the run, not a take-off. */
+  if (n.type === 'heater') {
+    const nb = ductNeighbours(n.id);
+    if (nb.length === 2) {
+      asOneUndo('delete heater', () => { mergeAtDuctNode(n, nb); });
+      sel = null; closeInspector(); render();
+      toast('Heater removed — the two ducts were merged back into one');
+      return;
+    }
+  }
+
   /* Deleting a joint that sits in line between two sections heals the
      pipework rather than throwing both away — the metres either side of a
      joint that was only in the wrong place are still the metres. */
@@ -3109,6 +3391,23 @@ function mergeAtBranch(j, nb) {
   if (S.settings.autoName !== false) autoNameSections(true);
 }
 
+function mergeAtDuctNode(j, nb) {
+  const [s1, s2] = nb;
+  const ptsFrom = (sg) => (sg.a === j.id ? sg.pts.slice() : sg.pts.slice().reverse());
+  const p1 = ptsFrom(s1).reverse();
+  const p2 = ptsFrom(s2).slice(1);
+  const far1 = s1.a === j.id ? s1.b : s1.a;
+  const far2 = s2.a === j.id ? s2.b : s2.a;
+  const off1 = s1.a === j.id ? s1.bOff : s1.aOff;
+  const off2 = s2.a === j.id ? s2.bOff : s2.aOff;
+  s1.a = far1; s1.b = far2;
+  s1.aOff = off1 || null; s1.bOff = off2 || null;
+  s1.pts = dedupePts(p1.concat(p2));
+  S.ducts = S.ducts.filter(d => d.id !== s2.id);
+  S.nodes = S.nodes.filter(x => x.id !== j.id);
+  if (S.settings.autoName !== false) autoNameDucts(true);
+}
+
 /* ==========================================================================
    THE INSPECTOR
    Everything on the drawing is renameable and re-typeable from here — the
@@ -3132,6 +3431,8 @@ function openInspector() {
     if (n.type === 'condenser') { kind = 'Condenser'; name = n.name || 'Condenser'; html = condenserForm(n); }
     else if (n.type === 'indoor') { kind = 'Indoor unit'; name = n.name || 'Indoor unit'; html = indoorForm(n); }
     else if (n.type === 'bc') { kind = n.kind === 'single' ? 'Single BC box' : 'BC controller'; name = n.name || 'BC'; html = bcForm(n); }
+    else if (n.type === 'hrv') { kind = 'HRV'; name = n.name || 'HRV'; html = hrvForm(n); }
+    else if (n.type === 'heater') { kind = 'Inline heater'; name = n.name || 'Heater'; html = heaterForm(n); }
     else if (n.type === 'outlet') { kind = 'Outlet'; name = n.name || 'Outlet'; html = outletForm(n); }
     else if (n.type === 'controller') { kind = 'Controller'; name = n.name || 'Controller'; html = controllerForm(n); }
     else if (n.type === 'djoint') { kind = 'Duct joint'; name = 'Duct joint'; html = branchForm(n); }
@@ -3334,18 +3635,36 @@ function fanFields(n) {
       }).join('')
     + '</div>'
     + '<div style="font-size:11px;color:var(--muted);margin-top:5px">'
-    + 'The ticked speed is the volume the ductwork off this unit shares out — '
+    + 'The ticked speed is the volume each air stream off this unit is set out at — '
     + '<b>' + fmt(designFlow(n), 0) + ' l/s</b> at ' + fmt(fanAt(n, sp).p, 0) + ' Pa.</div></div>';
 }
 
 /* ---------- outlet ---------- */
 function outletForm(n) {
   const unit = n.unitId ? nodeById(n.unitId) : null;
+  const g = grilleOf(n);
+  const circ = g.face === 'circ';
   let html = '<label class="fld"><span>Name</span><input id="fName" value="' + esc(n.name) + '"></label>'
     + '<label class="fld"><span>Air</span><select id="fAir">'
-    + DUCT_KIND_ORDER.map(k2 => '<option value="' + k2 + '"' + (n.kind === k2 ? ' selected' : '') + '>'
+    + DUCT_KIND_ORDER.map(k2 => '<option value="' + k2 + '"' + (ductKindOf(n) === k2 ? ' selected' : '') + '>'
         + esc(DUCT_KINDS[k2].label) + '</option>').join('')
     + '</select></label>'
+    + '<label class="fld"><span>Grille</span><select id="fGrille">'
+    + GRILLE_ORDER.map(k2 => '<option value="' + k2 + '"' + ((n.grille || 'circ') === k2 ? ' selected' : '') + '>'
+        + esc(GRILLE_TYPES[k2].label) + '</option>').join('')
+    + '</select></label>';
+  html += circ
+    ? '<label class="fld"><span>Face diameter <em>mm — blank uses the type</em></span>'
+      + '<input type="number" id="fFaceDia" step="10" min="0" value="'
+      + (parseFloat(n.faceDia) || '') + '" placeholder="' + g.dia + '"></label>'
+    : '<div class="row2">'
+      + '<label class="fld"><span>Face W <em>mm</em></span><input type="number" id="fFaceW" step="10" min="0" value="'
+      + (parseFloat(n.faceW) || '') + '" placeholder="' + g.fw + '"></label>'
+      + '<label class="fld"><span>Face H <em>mm</em></span><input type="number" id="fFaceH" step="10" min="0" value="'
+      + (parseFloat(n.faceH) || '') + '" placeholder="' + g.fh + '"></label></div>';
+  html += '<label class="fld"><span>Free area <em>% of the face — leave blank for the full face</em></span>'
+    + '<input type="number" id="fFreePct" step="5" min="0" max="100" value="'
+    + (parseFloat(n.freePct) || '') + '"></label>'
     + '<label class="fld"><span>Type or model</span><input id="fModel" value="' + esc(n.model || '')
     + '" placeholder="e.g. 300×300 4-way diffuser"></label>'
     + '<label class="fld"><span>Air volume <em>l/s — leave at 0 to take an even share</em></span>'
@@ -3359,18 +3678,98 @@ function outletForm(n) {
     rows.push(['Unit at ' + designSpeed(unit), fmt(designFlow(unit), 0) + ' l/s']);
   }
   rows.push(['This outlet', fmt(n.flow || 0, 1) + ' l/s' + (n.auto ? ' <span class="chip">even share</span>' : '')]);
+  rows.push(['Face', esc(faceSizeLabel(n) || '—') + (parseFloat(n.freePct) > 0 ? ' at ' + fmt(n.freePct, 0) + '% free' : '')]);
+  if (n.faceVel > 0.01) rows.push(['<b>Face velocity</b>', '<b>' + fmt(n.faceVel, 2) + ' m/s</b>']);
+  if (n.room) {
+    const mates = S.nodes.filter(x => x.type === 'outlet' && (x.room || '') === n.room);
+    const inn = mates.filter(x => ductKindOf(x) === 'sa' || ductKindOf(x) === 'oa')
+      .reduce((t, x) => t + (x.flow || 0), 0);
+    const out = mates.filter(x => ductKindOf(x) === 'ra' || ductKindOf(x) === 'ea')
+      .reduce((t, x) => t + (x.flow || 0), 0);
+    rows.push(['Room in / out', fmt(inn, 0) + ' / ' + fmt(out, 0) + ' l/s']);
+  }
   html += derivedBox(rows);
   if (!n.reached) html += '<div class="note bad">No duct reaches this outlet, so it is in no air '
     + 'total. Trace a duct to it.</div>';
-  else if (n.auto) html += '<div class="note">Taking an even share of what the unit has left after '
+  else if (n.auto) html += '<div class="note">Taking an even share of this stream after '
     + 'anything pinned to a figure. Type a volume here to pin this one.</div>';
+  if (n.faceVel > 0 && (n.faceVel < VEL_FACE_LO || n.faceVel > VEL_FACE_HI))
+    html += '<div class="note ' + (n.faceVel > VEL_FACE_HI ? 'bad' : '') + '">Face velocity is '
+      + fmt(n.faceVel, 1) + ' m/s — the convention here is ' + fmt(VEL_FACE_LO, 1) + '–'
+      + fmt(VEL_FACE_HI, 1) + ' m/s.</div>';
+  return html + rowBtns(true);
+}
+
+function hrvForm(n) {
+  const sys = (S.ductSystems || []).find(x => x.unit.id === n.id);
+  let html = '<label class="fld"><span>Name</span><input id="fName" value="' + esc(n.name) + '"></label>'
+    + '<label class="fld"><span>Model</span><input id="fModel" value="' + esc(n.model || '')
+    + '" placeholder="e.g. LGH-50RVX"></label>'
+    + fanFields(n)
+    + '<label style="display:flex;gap:8px;align-items:flex-start;margin:8px 0 12px;font-size:12.5px">'
+    + '<input type="checkbox" id="fOpenRet"' + (n.openReturn ? ' checked' : '') + ' style="width:16px;height:16px;margin-top:2px">'
+    + '<span><b>Open return</b><br><span style="color:var(--ink-soft);font-size:11.5px">'
+    + 'The unit itself is the return — no RA duct. Tick this for a single-room box that draws from the void or the room.</span></span></label>'
+    + heightField(heightOf(n))
+    + footprintFields(n)
+    + '<label class="fld"><span>Room or reference</span><input id="fRoom" value="' + esc(n.room || '')
+    + '" placeholder="e.g. Ceiling void, store"></label>';
+
+  const rows = [['Type', 'Heat recovery ventilation']];
+  FAN_SPEEDS.forEach(f => {
+    const v = fanAt(n, f.key);
+    rows.push([f.label, (v.v ? fmt(v.v, 0) + ' l/s' : '—') + (v.p ? ' at ' + fmt(v.p, 0) + ' Pa' : '')]);
+  });
+  if (sys) {
+    DUCT_KIND_ORDER.forEach(k => {
+      const st = sys.streams[k];
+      if (!st || (!st.ducts.length && !st.outlets.length)) return;
+      rows.push([DUCT_KINDS[k].label, fmt(st.delivered, 0) + ' l/s · ' + fmt(st.lengthM, 1) + ' m']);
+    });
+    if (sys.openReturn) rows.push(['Return', 'open at the unit']);
+    (sys.rooms || []).forEach(r => {
+      if (r.room === '(no room)') return;
+      rows.push([r.room, fmt(r.sa || 0, 0) + ' in / ' + fmt(r.ra || 0, 0) + ' out']);
+    });
+  }
+  html += derivedBox(rows);
+  html += '<div class="note">Standalone. It is not on a refrigerant system — a controller can be '
+    + 'ticked against it. Four streams, each set out at the ticked fan speed.</div>';
+  return html + rowBtns(true);
+}
+
+function heaterForm(n) {
+  const unit = n.unitId ? nodeById(n.unitId) : null;
+  const neigh = ductNeighbours(n.id);
+  const kinds = neigh.map(d => ductKindOf(d));
+  const onOa = kinds.length && kinds.every(k => k === 'oa');
+  let html = '<label class="fld"><span>Name</span><input id="fName" value="' + esc(n.name) + '"></label>'
+    + '<label class="fld"><span>Model</span><input id="fModel" value="' + esc(n.model || '')
+    + '" placeholder="e.g. 1.5 kW pre-heater"></label>'
+    + '<label class="fld"><span>Duty <em>kW</em></span>'
+    + '<input type="number" id="fKw" step="0.1" min="0" value="' + (n.kw || 0) + '"></label>'
+    + heightField(heightOf(n))
+    + footprintFields(n);
+
+  const rows = [
+    ['On run', neigh.map(d => esc(segName(d))).join(' · ') || '—'],
+    ['Air', kinds.map(k => DUCT_KINDS[k].short).filter((v, i, a) => a.indexOf(v) === i).join(' · ') || '—'],
+  ];
+  if (unit) rows.push(['On unit', esc(unit.name)]);
+  if (neigh[0] && neigh[0].flow > 0) rows.push(['Through it', fmt(neigh[0].flow, 0) + ' l/s']);
+  html += derivedBox(rows);
+  if (!n.reached) html += '<div class="note bad">No duct reaches this heater. Trace the outdoor-air '
+    + 'run through it, or drop it onto a duct already drawn.</div>';
+  else if (!onOa) html += '<div class="note bad">An inline heater belongs on the outdoor-air run. '
+    + 'The ducts on it are ' + kinds.map(k => DUCT_KINDS[k].label.toLowerCase()).join(' and ') + '.</div>';
+  else html += '<div class="note ok">On the outdoor-air run. It does not take air off — it sits in line.</div>';
   return html + rowBtns(true);
 }
 
 /* ---------- controller ---------- */
 function controllerForm(n) {
   const serves = n.serves || [];
-  const indoors = S.nodes.filter(x => x.type === 'indoor');
+  const indoors = S.nodes.filter(x => x.type === 'indoor' || x.type === 'hrv');
   let html = '<label class="fld"><span>Name</span><input id="fName" value="' + esc(n.name) + '"></label>'
     + '<label class="fld"><span>Kind</span><select id="fKind">'
     + CONTROLLER_ORDER.map(k2 => '<option value="' + k2 + '"' + (n.kind === k2 ? ' selected' : '') + '>'
@@ -3384,7 +3783,7 @@ function controllerForm(n) {
 
   html += '<div class="fld"><span>Units this controller drives</span>'
     + '<div style="display:flex;gap:6px;margin-bottom:6px">'
-    + '<button class="btn ghost sm" id="fCtlAll">All indoor units</button>'
+    + '<button class="btn ghost sm" id="fCtlAll">All units</button>'
     + '<button class="btn ghost sm" id="fCtlNone">None</button></div>'
     + (indoors.length
         ? '<div class="hpts">' + indoors.map(u =>
@@ -3392,9 +3791,9 @@ function controllerForm(n) {
             + '<input type="checkbox" data-serve="' + u.id + '"'
             + (serves.indexOf(u.id) >= 0 ? ' checked' : '') + ' style="width:15px;height:15px">'
             + '<span>' + esc(u.name || 'unit') + '</span>'
-            + '<span class="rise">' + esc((INDOOR_TYPES[u.unit] || {}).abbr || '') + '</span></label>').join('')
+            + '<span class="rise">' + esc(u.type === 'hrv' ? 'HRV' : ((INDOOR_TYPES[u.unit] || {}).abbr || '')) + '</span></label>').join('')
           + '</div>'
-        : '<div class="note">No indoor units placed yet.</div>')
+        : '<div class="note">No indoor units or HRVs placed yet.</div>')
     + '</div>';
 
   html += derivedBox([
@@ -3417,7 +3816,7 @@ function ductForm(d) {
   let html = '<label class="fld"><span>Section name <em>blank uses ' + esc(d.ref || '—') + '</em></span>'
     + '<input id="fDName" value="' + esc(d.name || '') + '" placeholder="' + esc(d.ref || '') + '"></label>'
     + '<label class="fld"><span>Air</span><select id="fDKind">'
-    + DUCT_KIND_ORDER.map(k2 => '<option value="' + k2 + '"' + (d.kind === k2 ? ' selected' : '') + '>'
+    + DUCT_KIND_ORDER.map(k2 => '<option value="' + k2 + '"' + (ductKindOf(d) === k2 ? ' selected' : '') + '>'
         + esc(DUCT_KINDS[k2].label) + '</option>').join('')
     + '</select></label>';
 
@@ -3496,9 +3895,14 @@ function ductForm(d) {
     ? fmt(hs[0], 2) + ' m' : fmt(hs[0], 2) + '–' + fmt(hs[hs.length - 1], 2) + ' m']);
   html += derivedBox(rows);
 
-  if (d.orphan) html += '<div class="note bad">This duct is not connected to a ducted unit, so it '
-    + 'carries no air. Join one end to the unit, a duct joint or an outlet.</div>';
+  if (d.orphan) html += '<div class="note bad">This duct is not connected to a ducted unit or an HRV, '
+    + 'so it carries no air. Join one end to the plant, a heater, a joint or an outlet.</div>';
   else if (!(d.area > 0)) html += '<div class="note">Give it a size and the velocity comes with it.</div>';
+  else if (d.vel > 0 && (d.vel < VEL_DUCT_LO || d.vel > VEL_DUCT_HI))
+    html += '<div class="note ' + (d.vel > VEL_DUCT_HI ? 'bad' : '') + '">Velocity is '
+      + fmt(d.vel, 1) + ' m/s — the convention here is ' + fmt(VEL_DUCT_LO, 1) + '–'
+      + fmt(VEL_DUCT_HI, 1) + ' m/s (the size helper aims at '
+      + fmt(S.settings.ductVel, 1) + ').</div>';
   return html + rowBtns(false);
 }
 
@@ -3722,8 +4126,8 @@ function wireInspector() {
     });
   }
 
-  /* ---- ducted unit fan data ---- */
-  if (n && n.unit === 'ducted') {
+  /* ---- ducted unit / HRV fan data ---- */
+  if (n && (n.unit === 'ducted' || n.type === 'hrv')) {
     const setFan = (key, field, v) => {
       n.fan = n.fan || {};
       n.fan[key] = n.fan[key] || {};
@@ -3741,12 +4145,21 @@ function wireInspector() {
   }
 
   /* ---- outlet ---- */
-  on('fAir', 'change', e => change('change the air on ' + (n.name || 'outlet'), () => { n.kind = e.target.value; }));
+  on('fAir', 'change', e => change('change the air on ' + (n.name || 'outlet'), () => { n.kind = ductKind(e.target.value); }));
+  on('fGrille', 'change', e => change('change the grille on ' + (n.name || 'outlet'), () => {
+    n.grille = e.target.value;
+    delete n.faceDia; delete n.faceW; delete n.faceH;
+  }));
+  on('fFaceDia', 'change', e => { pushUndo('set a face size'); n.faceDia = parseFloat(e.target.value) || 0; render(); openInspector(); });
+  on('fFaceW', 'change', e => { pushUndo('set a face size'); n.faceW = parseFloat(e.target.value) || 0; render(); openInspector(); });
+  on('fFaceH', 'change', e => { pushUndo('set a face size'); n.faceH = parseFloat(e.target.value) || 0; render(); openInspector(); });
+  on('fFreePct', 'change', e => { pushUndo('set free area'); n.freePct = parseFloat(e.target.value) || 0; render(); openInspector(); });
   on('fLps', 'change', e => {
     pushUndo('set an outlet volume');
     n.lps = parseFloat(e.target.value) || 0;
     render(); openInspector();
   });
+  on('fOpenRet', 'change', e => change('set open return', () => { n.openReturn = e.target.checked; }));
 
   /* ---- controller ---- */
   if (n && n.type === 'controller') {
@@ -3759,8 +4172,8 @@ function wireInspector() {
         else n.serves = n.serves.filter(x => x !== id);
         render(); openInspector();
       }));
-    on('fCtlAll', 'click', () => change('drive every indoor unit', () => {
-      n.serves = S.nodes.filter(x => x.type === 'indoor').map(x => x.id);
+    on('fCtlAll', 'click', () => change('drive every unit', () => {
+      n.serves = S.nodes.filter(x => x.type === 'indoor' || x.type === 'hrv').map(x => x.id);
     }));
     on('fCtlNone', 'click', () => change('drive nothing', () => { n.serves = []; }));
   }
@@ -3771,7 +4184,7 @@ function wireInspector() {
     const redo = () => { render(); openInspector(); };
     on('fDName', 'input', e => { d.name = e.target.value; render(); el('insName').textContent = segName(d); });
     on('fDNote', 'input', e => { d.note = e.target.value; });
-    on('fDKind', 'change', e => { pushUndo('change duct air'); d.kind = e.target.value; redo(); });
+    on('fDKind', 'change', e => { pushUndo('change duct air'); d.kind = ductKind(e.target.value); redo(); });
     on('fDShape', 'change', e => { pushUndo('change duct shape'); d.shape = e.target.value; redo(); });
     on('fDDia', 'change', e => { pushUndo('size a duct'); d.dia = parseFloat(e.target.value) || 0; redo(); });
     on('fDW', 'change', e => { pushUndo('size a duct'); d.w = parseFloat(e.target.value) || 0; redo(); });
@@ -3840,7 +4253,9 @@ function wireInspector() {
     c.id = nid();
     const b = unitBox(n, 1 / zoom);
     c.x = n.x + b.w * 1.25; c.y = n.y;
-    c.name = nextName(n.type === 'condenser' ? 'CU' : n.type === 'indoor' ? 'IU' : 'BC');
+    c.name = nextName(n.type === 'condenser' ? 'CU' : n.type === 'indoor' ? 'IU'
+      : n.type === 'hrv' ? 'HRV' : n.type === 'heater' ? 'HTR'
+      : n.type === 'outlet' ? (DUCT_KINDS[ductKindOf(n)].short) : 'BC');
     delete c.reached; delete c.sysId; delete c.depth;
     S.nodes.push(c);
     select('node', c.id);
@@ -3943,7 +4358,7 @@ function auditTake() {
   const t = totals();
 
   if (!(S.pxPerM > 0)) issues.push('The drawing has no scale, so every length on it is meaningless.');
-  if (!t.condensers) issues.push('There are no condensers, so nothing is on a system.');
+  if (!t.condensers && t.indoors) issues.push('There are no condensers, so nothing is on a system.');
 
   S.nodes.filter(n => n.type === 'indoor' && !n.reached).forEach(n =>
     issues.push(n.name + ' is not piped back to a condenser.'));
@@ -3965,32 +4380,87 @@ function auditTake() {
       + ' m has fewer than three sections on it, so it is a corner rather than a joint.');
   });
 
-  /* ---- ductwork ---- */
+  /* ---- ductwork and HRV ---- */
   S.ducts.filter(d => d.orphan).forEach(d =>
-    issues.push(segName(d) + ' is not connected to a ducted unit, so it carries no air.'));
+    issues.push(segName(d) + ' is not connected to a ducted unit or an HRV, so it carries no air.'));
   S.nodes.filter(n => n.type === 'outlet' && !n.reached).forEach(n =>
     issues.push(n.name + ' has no duct to it.'));
+  S.nodes.filter(n => n.type === 'heater' && !n.reached).forEach(n =>
+    issues.push(n.name + ' has no duct through it.'));
+  S.nodes.filter(n => n.type === 'heater' && n.reached).forEach(n => {
+    const kinds = ductNeighbours(n.id).map(d => ductKindOf(d));
+    if (kinds.length && kinds.some(k => k !== 'oa'))
+      warns.push(n.name + ' is not only on outdoor air — an inline heater belongs on the OA run.');
+  });
   (S.ductSystems || []).forEach(x => {
-    if (!x.ducts.length) return;
-    if (!(x.total > 0)) {
+    if (!x.ducts.length && x.plant !== 'hrv') return;
+    if (!(x.total > 0) && x.ducts.length) {
       issues.push(x.unit.name + ' has ductwork on it but no air volume against its '
         + x.speed + ' fan speed, so nothing can be shared out.');
       return;
     }
-    if (Math.abs(x.delivered - x.total) > Math.max(1, x.total * 0.005)) {
-      issues.push(x.unit.name + ' moves ' + fmt(x.total, 0) + ' l/s but its outlets take '
-        + fmt(x.delivered, 0) + ' l/s — ' + (x.delivered > x.total ? 'over' : 'under')
-        + ' by ' + fmt(Math.abs(x.delivered - x.total), 0) + ' l/s.');
+    if (x.plant === 'hrv') {
+      const need = [
+        ['oa', 'outdoor air'],
+        ['ea', 'exhaust'],
+        ['sa', 'supply to the rooms'],
+      ];
+      need.forEach(([k, label]) => {
+        const st = x.streams[k];
+        if (!st || (!st.ducts.length && !st.outlets.length))
+          warns.push(x.unit.name + ' has no ' + label + ' duct.');
+      });
+      if (!x.openReturn) {
+        const ra = x.streams.ra;
+        if (!ra || (!ra.ducts.length && !ra.outlets.length))
+          warns.push(x.unit.name + ' has no return duct — tick Open return if the unit itself is the return.');
+      }
+      if (x.total > 0) {
+        ['sa', 'ea'].forEach(k => {
+          const st = x.streams[k];
+          if (!st || !(st.delivered > 0)) return;
+          if (Math.abs(st.delivered - x.total) > Math.max(1, x.total * BALANCE_TOL))
+            warns.push(x.unit.name + ': ' + DUCT_KINDS[k].label.toLowerCase() + ' is '
+              + fmt(st.delivered, 0) + ' l/s against ' + fmt(x.total, 0)
+              + ' l/s at the unit — more than ' + fmt(BALANCE_TOL * 100, 0) + '% off.');
+        });
+        const sa = x.streams.sa && x.streams.sa.delivered, ea = x.streams.ea && x.streams.ea.delivered;
+        if (sa > 0 && ea > 0 && Math.abs(sa - ea) > Math.max(1, Math.max(sa, ea) * BALANCE_TOL))
+          warns.push(x.unit.name + ': supply ' + fmt(sa, 0) + ' l/s and exhaust ' + fmt(ea, 0)
+            + ' l/s differ by more than ' + fmt(BALANCE_TOL * 100, 0) + '%.');
+      }
+    } else if (x.total > 0) {
+      DUCT_KIND_ORDER.forEach(k => {
+        const st = x.streams[k];
+        if (!st || !(st.nOutlets > 0)) return;
+        if (Math.abs(st.delivered - x.total) > Math.max(1, x.total * 0.005))
+          issues.push(x.unit.name + ' moves ' + fmt(x.total, 0) + ' l/s but its '
+            + DUCT_KINDS[k].label.toLowerCase() + ' take '
+            + fmt(st.delivered, 0) + ' l/s — ' + (st.delivered > x.total ? 'over' : 'under')
+            + ' by ' + fmt(Math.abs(st.delivered - x.total), 0) + ' l/s.');
+      });
     }
-    if (!x.nOutlets) warns.push(x.unit.name + ' has ductwork but nothing taking air off it.');
+    if (x.ducts.length && !x.nOutlets && !x.openReturn)
+      warns.push(x.unit.name + ' has ductwork but nothing taking air off it.');
     x.ducts.filter(d => !(d.area > 0)).forEach(d =>
       warns.push(segName(d) + ' has no duct size, so no velocity can be worked out.'));
-    if (x.maxVel > 0 && x.maxVel > 8)
-      warns.push(x.unit.name + ': the fastest duct on it is ' + fmt(x.maxVel, 1)
-        + ' m/s. Check that against what the job will take.');
+    x.ducts.filter(d => d.area > 0 && d.vel > 0 && d.vel > VEL_DUCT_HI).forEach(d =>
+      warns.push(segName(d) + ' is ' + fmt(d.vel, 1) + ' m/s — above '
+        + fmt(VEL_DUCT_HI, 1) + ' m/s.'));
+    x.ducts.filter(d => d.area > 0 && d.vel > 0 && d.vel < VEL_DUCT_LO).forEach(d =>
+      warns.push(segName(d) + ' is only ' + fmt(d.vel, 1) + ' m/s — below '
+        + fmt(VEL_DUCT_LO, 1) + ' m/s, so the duct may be large for what it carries.'));
+    x.outlets.filter(o => o.faceVel > VEL_FACE_HI).forEach(o =>
+      warns.push(o.name + ' face velocity is ' + fmt(o.faceVel, 1) + ' m/s — above '
+        + fmt(VEL_FACE_HI, 1) + ' m/s.'));
+    x.outlets.filter(o => o.flow > 0 && o.faceArea > 0 && o.faceVel < VEL_FACE_LO).forEach(o =>
+      warns.push(o.name + ' face velocity is only ' + fmt(o.faceVel, 1) + ' m/s — below '
+        + fmt(VEL_FACE_LO, 1) + ' m/s.'));
   });
+  S.nodes.filter(n => n.type === 'hrv' && !designFlow(n)).forEach(n =>
+    warns.push(n.name + ' is an HRV with no airflow against its ' + designSpeed(n) + ' speed.'));
   S.nodes.filter(n => n.type === 'controller' && !(n.serves || []).length).forEach(n =>
-    warns.push(n.name + ' is not ticked against any indoor unit.'));
+    warns.push(n.name + ' is not ticked against any indoor unit or HRV.'));
   S.nodes.filter(n => n.type === 'indoor' && n.unit === 'ducted' && !designFlow(n)).forEach(n =>
     warns.push(n.name + ' is a ducted unit with no airflow data against it.'));
 
@@ -4001,13 +4471,26 @@ function auditTake() {
   return { issues, warns };
 }
 
+function checkClearBits() {
+  const t = totals();
+  const bits = [];
+  if (t.indoors || t.condensers)
+    bits.push('every indoor unit is piped and every system matches its type');
+  if (t.hrv || t.ducts || t.outlets)
+    bits.push('every ducted run and HRV is connected');
+  return bits;
+}
+function checkClearNote() {
+  const bits = checkClearBits();
+  return bits.length ? 'Nothing to report. ' + bits.join(', and ') + '.' : 'Nothing to report.';
+}
+
 function checkDialog() {
   solve();
   const a = auditTake();
   let html = '';
   if (!a.issues.length && !a.warns.length) {
-    html = '<div class="note ok" style="margin-top:0">Nothing to report. Every unit is piped, every '
-         + 'system matches its type, and every section is on a system.</div>';
+    html = '<div class="note ok" style="margin-top:0">' + esc(checkClearNote()) + '</div>';
   } else {
     if (a.issues.length) html += '<h4 style="margin-top:0">Will not read right (' + a.issues.length + ')</h4>'
       + '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.6">'
@@ -4263,8 +4746,9 @@ function renderDuctSchedule() {
     + '<th>Size<i>mm</i></th><th class="n">Velocity<i>m/s</i></th>'
     + '<th class="n">Off it<i>l/s</i></th><th class="n">Outlets</th><th>Note</th></tr></thead><tbody>';
 
-  const groups = (S.ductSystems || []).map(x => ({ label: x.unit.name + ' — ' + fmt(x.total, 0)
-    + ' l/s at ' + x.speed + (x.pa ? ', ' + fmt(x.pa, 0) + ' Pa' : ''), ducts: x.ducts, x }));
+  const groups = (S.ductSystems || []).map(x => ({ label: x.unit.name + (x.plant === 'hrv' ? ' — HRV' : '')
+    + ' — ' + fmt(x.total, 0) + ' l/s at ' + x.speed + (x.pa ? ', ' + fmt(x.pa, 0) + ' Pa' : '')
+    + (x.openReturn ? ' · open return' : ''), ducts: x.ducts, x }));
   const loose = S.ducts.filter(d => d.orphan);
   if (loose.length) groups.push({ label: 'Not on a unit', ducts: loose, x: null });
 
@@ -4279,7 +4763,7 @@ function renderDuctSchedule() {
         html += '<tr class="' + (d.orphan ? 'orph' : 'main') + pick + '" data-duct="' + d.id + '">'
           + '<td><b>' + esc(segName(d)) + '</b>' + (d.sock ? ' <span class="chip">sock</span>' : '') + '</td>'
           + '<td class="dim">' + esc(gr.x ? gr.x.unit.name : '—') + '</td>'
-          + '<td class="dim">' + esc((DUCT_KINDS[d.kind] || DUCT_KINDS.supply).short) + '</td>'
+          + '<td class="dim">' + esc(ductKindDef(d).short) + '</td>'
           + '<td class="dim">' + esc(up ? (up.name || nodeWord(up)) : '—') + '</td>'
           + '<td class="dim">' + esc(dn ? (dn.name || nodeWord(dn)) : '—') + '</td>'
           + '<td class="n">' + fmt(d.lengthM, 2) + '</td>'
@@ -4302,11 +4786,12 @@ function renderDuctSchedule() {
       html += '<tr class="' + (o.reached ? 'brn' : 'orph') + pick + '" data-node="' + o.id + '">'
         + '<td><b>' + esc(o.name || '') + '</b></td>'
         + '<td class="dim">' + esc(u ? u.name : '—') + '</td>'
-        + '<td class="dim">' + esc((DUCT_KINDS[o.kind] || DUCT_KINDS.supply).short) + '</td>'
-        + '<td class="dim" colspan="2">' + esc(o.model || '') + '</td>'
+        + '<td class="dim">' + esc(ductKindDef(o).short) + '</td>'
+        + '<td class="dim" colspan="2">' + esc((grilleOf(o).short) + (o.model ? ' · ' + o.model : '')) + '</td>'
         + '<td class="n dim">' + fmt(heightOf(o), 2) + '</td>'
         + '<td class="n"><b>' + fmt(o.flow || 0, 0) + '</b></td>'
-        + '<td colspan="2" class="dim">' + (o.auto ? 'even share' : 'set') + '</td>'
+        + '<td colspan="2" class="dim">' + (o.auto ? 'even share' : 'set')
+        + (o.faceVel > 0 ? ' · ' + fmt(o.faceVel, 1) + ' m/s face' : '') + '</td>'
         + '<td class="n"></td><td class="n"></td>'
         + '<td class="dim">' + esc(o.room || '') + '</td></tr>';
     });
@@ -4324,38 +4809,47 @@ function renderUnitSchedule() {
   el('schedTitle').textContent = 'Units';
   const t = totals();
   el('schedNote').innerHTML = plural(t.condensers, 'condenser') + ' &middot; '
-    + plural(t.indoors, 'indoor unit') + ' &middot; ' + fmt(t.kwIndoor, 1) + ' kW indoor';
+    + plural(t.indoors, 'indoor unit')
+    + (t.hrv ? ' &middot; ' + plural(t.hrv, 'HRV') : '')
+    + ' &middot; ' + fmt(t.kwIndoor, 1) + ' kW indoor';
 
   let html = '<thead><tr><th>Name</th><th>What</th><th>Type</th><th>Model</th>'
     + '<th class="n">Cooling<i>kW</i></th><th class="n">Heating<i>kW</i></th>'
     + '<th class="n">Height<i>m aff</i></th><th>System</th>'
     + '<th class="n">Pipe run<i>one way, m</i></th><th>Room</th></tr></thead><tbody>';
 
-  const order = ['condenser', 'bc', 'indoor'];
-  S.nodes.filter(n => n.type !== 'branch')
-    .sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type)
+  const order = ['condenser', 'bc', 'indoor', 'hrv', 'heater'];
+  S.nodes.filter(n => n.type !== 'branch' && n.type !== 'djoint' && n.type !== 'outlet' && n.type !== 'controller')
+    .sort((a, b) => (order.indexOf(a.type) < 0 ? 9 : order.indexOf(a.type))
+      - (order.indexOf(b.type) < 0 ? 9 : order.indexOf(b.type))
       || String(a.name).localeCompare(String(b.name), 'en', { numeric: true }))
     .forEach(n => {
       const cond = n.sysId ? nodeById(n.sysId) : null;
-      const path = n.type === 'condenser' ? [] : pathToNode(n.id);
+      const path = (n.type === 'condenser' || n.type === 'hrv' || n.type === 'heater') ? [] : pathToNode(n.id);
       const runM = path.reduce((s, x) => s + x.lengthM, 0);
       const what = n.type === 'condenser' ? 'Condenser'
                  : n.type === 'bc' ? (n.kind === 'single' ? 'Single BC box' : 'BC controller')
+                 : n.type === 'hrv' ? 'HRV'
+                 : n.type === 'heater' ? 'Inline heater'
                  : 'Indoor unit';
       const typ = n.type === 'condenser' ? (SYSTEMS[n.system] || SYSTEMS.vrf2).label
-                : n.type === 'indoor' ? (INDOOR_TYPES[n.unit] || {}).label || '—' : '—';
+                : n.type === 'indoor' ? (INDOOR_TYPES[n.unit] || {}).label || '—'
+                : n.type === 'hrv' ? 'Heat recovery'
+                : n.type === 'heater' ? 'OA heater' : '—';
       const pick = sel && sel.kind === 'node' && sel.id === n.id ? ' class="pick"' : '';
+      const pipedBad = n.reached === false && n.type !== 'condenser' && n.type !== 'hrv' && n.type !== 'heater';
       html += '<tr' + pick + ' data-node="' + n.id + '">'
-        + '<td><b>' + esc(n.name || '') + '</b>' + (n.reached === false && n.type !== 'condenser'
+        + '<td><b>' + esc(n.name || '') + '</b>' + (pipedBad
             ? ' <span class="chip bad">not piped</span>' : '') + '</td>'
         + '<td class="dim">' + what + '</td>'
         + '<td>' + esc(typ) + '</td>'
         + '<td class="dim">' + esc(n.model || '—') + '</td>'
-        + '<td class="n">' + (n.type === 'bc' ? '—' : fmt(parseFloat(n.kw) || 0, 1)) + '</td>'
-        + '<td class="n">' + (n.type === 'bc' ? '—' : fmt(parseFloat(n.kwHeat) || 0, 1)) + '</td>'
+        + '<td class="n">' + (n.type === 'bc' || n.type === 'hrv' || n.type === 'heater' ? '—' : fmt(parseFloat(n.kw) || 0, 1)) + '</td>'
+        + '<td class="n">' + (n.type === 'heater' ? fmt(parseFloat(n.kw) || 0, 1)
+            : n.type === 'bc' || n.type === 'hrv' ? '—' : fmt(parseFloat(n.kwHeat) || 0, 1)) + '</td>'
         + '<td class="n">' + fmt(heightOf(n), 2) + '</td>'
         + '<td class="dim">' + esc(cond ? cond.name : (n.type === 'condenser' ? n.name : '—')) + '</td>'
-        + '<td class="n">' + (n.type === 'condenser' ? '—' : fmt(runM, 2)) + '</td>'
+        + '<td class="n">' + (n.type === 'condenser' || n.type === 'hrv' || n.type === 'heater' ? '—' : fmt(runM, 2)) + '</td>'
         + '<td class="dim">' + esc(n.room || '') + '</td>'
         + '</tr>';
     });
@@ -4419,6 +4913,7 @@ function renderLimits() {
     + cell('Sections', String(t.sections))
     + cell('Condensers', String(t.condensers))
     + cell('Indoor units', String(t.indoors))
+    + (t.hrv ? cell('HRV', String(t.hrv)) : '')
     + cell('BC boxes', String(t.bc))
     + cell('Joints', String(t.branches))
     + cell('Indoor duty', fmt(t.kwIndoor, 1) + ' kW')
@@ -4429,6 +4924,7 @@ function renderLimits() {
           + cell('Air moved', fmt(t.airLps, 0) + ' l/s', true)
           + cell('Duct sections', String(t.ducts))
           + cell('Outlets', String(t.outlets))
+          + (t.heaters ? cell('Heaters', String(t.heaters)) : '')
           + cell('Controllers', String(t.controllers))
           + '</div>'
         : '');
@@ -4592,7 +5088,7 @@ function build3D() {
   S.ducts.forEach(d => {
     const poly = segPoly3D(d, W);
     if (poly.length < 2) return;
-    const col = (DUCT_KINDS[d.kind] || DUCT_KINDS.supply).colour;
+    const col = ductKindDef(d).colour;
     items.push({ t: 'line', pts: poly, w: clamp(2 + (d.area > 0 ? Math.sqrt(d.area) * 9 : 1.5), 2, 9),
       c: col, duct: d.id });
     poly.forEach(p => { if (p.Z > zMax) zMax = p.Z; if (p.Z < zMin) zMin = p.Z; });
@@ -4616,16 +5112,18 @@ function build3D() {
 
     if (n.type === 'branch' || n.type === 'djoint') {
       cuboid3D(c, bs * 0.26, bs * 0.26, bs * 0.26 * zk, '#f4f2ec',
-        n.type === 'djoint' ? DUCT_KINDS.supply.colour : '#4a5059').forEach(f => items.push(f));
+        n.type === 'djoint' ? DUCT_KINDS.sa.colour : '#4a5059').forEach(f => items.push(f));
       if (V3.labels) labels.push({ at: { X: c.X, Y: c.Y, Z: c.Z + bs * 0.18 * zk },
         text: '', sub: fmt(z, 2) + ' m', small: true });
       return;
     }
     const cond = n.type === 'condenser';
     const bc = n.type === 'bc';
-    const fill = cond ? '#39404b' : (n.reached || n.type === 'controller' ? '#ffffff' : '#fdecea');
+    const fill = cond ? '#39404b' : (n.reached || n.type === 'controller' || n.type === 'hrv' ? '#ffffff' : '#fdecea');
     const stroke = cond ? '#191d26'
-      : n.type === 'outlet' ? (DUCT_KINDS[n.kind] || DUCT_KINDS.supply).colour
+      : n.type === 'outlet' ? ductKindDef(n).colour
+      : n.type === 'hrv' ? NODE_EDGE_EXTRA.hrv
+      : n.type === 'heater' ? NODE_EDGE_EXTRA.heater
       : n.type === 'controller' ? NODE_EDGE_EXTRA.controller
       : (n.reached ? (bc ? '#5a5d68' : (INDOOR_EDGE[n.unit] || '#4a9fd8')) : '#bb3b2e');
     /* The real footprint and the real angle, the same two figures the plan
@@ -4795,7 +5293,8 @@ function legend3D() {
     + '<span class="sw" style="background:' + LINES.liquid.colour + '"></span>Liquid'
     + '<span class="sw" style="background:' + LINES.gas.colour + ';margin-left:8px"></span>Suction gas'
     + (has3 ? '<span class="sw" style="background:' + LINES.hpgas.colour + ';margin-left:8px"></span>HP gas' : '')
-    + (hasDuct ? '<span class="sw" style="background:' + DUCT_KINDS.supply.colour + ';margin-left:8px"></span>Duct' : '')
+    + (hasDuct ? DUCT_KIND_ORDER.map(k =>
+        '<span class="sw" style="background:' + DUCT_KINDS[k].colour + ';margin-left:8px"></span>' + DUCT_KINDS[k].short).join('') : '')
     + '</div>'
     + '<div class="ln" style="color:var(--ink-soft)">' + fmt(lo, 2) + ' m to ' + fmt(hi, 2) + ' m &middot; '
     + plural(risers, 'section') + ' with a rise &middot; grid ' + m.step + ' m</div>'
@@ -5267,6 +5766,7 @@ async function buildReport() {
   ${fig('Insulation', fmt(t.insulatedM, 1) + ' m')}
   ${t.ducts ? fig('Ductwork', fmt(t.ductM, 1) + ' m') : ''}
   ${t.ducts ? fig('Air moved', fmt(t.airLps, 0) + ' l/s') : ''}
+  ${t.hrv ? fig('HRV', String(t.hrv)) : ''}
   ${t.outlets ? fig('Outlets', String(t.outlets)) : ''}
   ${t.controllers ? fig('Controllers', String(t.controllers)) : ''}
 </div>
@@ -5281,7 +5781,7 @@ async function buildReport() {
 ${a.issues.length
   ? '<div class="warn"><b>' + plural(a.issues.length, 'thing') + ' to settle before these lengths are used</b><ul>'
     + a.issues.map(m => '<li>' + esc(m) + '</li>').join('') + '</ul></div>'
-  : '<div class="ok">Checked: every unit is piped, every system matches its type, and every section is on a system.</div>'}
+  : '<div class="ok">Checked: ' + esc(checkClearBits().length ? checkClearBits().join(', and ') + '.' : 'nothing to report.') + '</div>'}
 
 <h2>Systems</h2>
 <table class="rep"><thead><tr><th>Condenser</th><th>System</th><th class="n">Indoor units</th>
@@ -5326,14 +5826,16 @@ ${frontSrc ? '<figure><img src="' + frontSrc + '" alt="Elevation of the pipework
   + 'and each indoor unit at a glance. <b>The vertical is stretched &times;' + ELEV_EX + '</b> so small '
   + 'height differences can be read; the plan directions are true.</figcaption></figure>' : ''}
 
-${(S.ductSystems || []).some(x => x.ducts.length) || t.controllers ? `
+${(S.ductSystems || []).some(x => x.ducts.length || x.plant === 'hrv') || t.controllers ? `
 <div class="pb"></div>
-<h2>Ductwork, outlets and control</h2>
-<p class="lede">Air volumes are the ducted unit's own, at the fan speed the ductwork is set out at.
-  Anything not pinned to a figure takes an even share of what is left, which is the first answer and
-  rarely the last one. Velocity follows from the duct size given against each section.</p>
-${(S.ductSystems || []).filter(x => x.ducts.length).map(x => '<section class="blk">'
-  + '<h3>' + esc(x.unit.name) + ' <span class="sysref">— ductwork</span></h3>'
+<h2>Ductwork, ventilation and control</h2>
+<p class="lede">Air volumes are the plant's own, at the fan speed the ductwork is set out at —
+  a ducted unit or an HRV. Each air stream shares on its own. Anything not pinned to a figure
+  takes an even share of what is left. Duct velocity follows from the size given against each
+  section; face velocity follows from the grille.</p>
+${(S.ductSystems || []).filter(x => x.ducts.length || x.plant === 'hrv').map(x => '<section class="blk">'
+  + '<h3>' + esc(x.unit.name) + ' <span class="sysref">— '
+    + (x.plant === 'hrv' ? 'HRV' : 'ductwork') + '</span></h3>'
   + '<div class="figs">'
   + fig('Air at ' + x.speed, fmt(x.total, 0) + ' l/s', true)
   + fig('External resistance', x.pa ? fmt(x.pa, 0) + ' Pa' : '—')
@@ -5341,7 +5843,12 @@ ${(S.ductSystems || []).filter(x => x.ducts.length).map(x => '<section class="bl
   + fig('Outlets', String(x.nOutlets))
   + fig('Delivered', fmt(x.delivered, 0) + ' l/s')
   + fig('Fastest duct', x.maxVel > 0 ? fmt(x.maxVel, 1) + ' m/s' : '—')
+  + (x.openReturn ? fig('Return', 'open at the unit') : '')
   + '</div>'
+  + ((x.rooms || []).filter(r => r.room !== '(no room)').length
+      ? '<p class="lede" style="margin-top:6px">' + x.rooms.filter(r => r.room !== '(no room)')
+          .map(r => '<b>' + esc(r.room) + '</b> ' + fmt(r.sa || 0, 0) + ' l/s in, '
+            + fmt(r.ra || 0, 0) + ' l/s out').join(' · ') + '</p>' : '')
   + repTable([
       { h: 'Section', cls: 'key' }, { h: 'Air' }, { h: 'From', cls: 'dim' }, { h: 'To', cls: 'dim' },
       { h: 'Length m', n: true }, { h: 'Carries l/s', n: true, strong: true },
@@ -5352,7 +5859,7 @@ ${(S.ductSystems || []).filter(x => x.ducts.length).map(x => '<section class="bl
       .map(d => {
         const up = nodeById(d.up != null ? d.up : d.a), dn = nodeById(d.down != null ? d.down : d.b);
         return [segName(d) + (d.sock ? ' (sock)' : ''),
-          DUCT_KINDS[d.kind || 'supply'].short,
+          ductKindDef(d).short,
           up ? (up.name || nodeWord(up)) : '', dn ? (dn.name || nodeWord(dn)) : '',
           fmt(d.lengthM, 2), fmt(d.flow, 0), ductSizeLabel(d),
           d.vel > 0 ? fmt(d.vel, 2) : '', d.takeOff > 0 ? fmt(d.takeOff, 0) : '',
@@ -5360,12 +5867,15 @@ ${(S.ductSystems || []).filter(x => x.ducts.length).map(x => '<section class="bl
           d.note || ''];
       }), ['Total', '', '', '', fmt(x.lengthM, 2)])
   + (x.outlets.length ? repTable([
-      { h: 'Outlet', cls: 'key' }, { h: 'Air' }, { h: 'Type or model', opt: true },
-      { h: 'Volume l/s', n: true, strong: true }, { h: 'Basis' },
+      { h: 'Outlet', cls: 'key' }, { h: 'Air' }, { h: 'Grille' }, { h: 'Face', opt: true },
+      { h: 'Type or model', opt: true },
+      { h: 'Volume l/s', n: true, strong: true }, { h: 'Face m/s', n: true, opt: true },
+      { h: 'Basis' },
       { h: 'Height m', n: true }, { h: 'Room', opt: true },
     ], x.outlets.slice().sort((a, b) => (b.flow || 0) - (a.flow || 0)).map(o =>
-      [o.name || '', DUCT_KINDS[o.kind || 'supply'].short, o.model || '',
-       fmt(o.flow || 0, 0), o.auto ? 'even share' : 'set', fmt(heightOf(o), 2), o.room || ''])) : '')
+      [o.name || '', ductKindDef(o).short, grilleOf(o).label, faceSizeLabel(o), o.model || '',
+       fmt(o.flow || 0, 0), o.faceVel > 0 ? fmt(o.faceVel, 2) : '',
+       o.auto ? 'even share' : 'set', fmt(heightOf(o), 2), o.room || ''])) : '')
   + '</section>').join('')}
 ${t.controllers ? '<h3>Controllers</h3>' + repTable([
     { h: 'Controller', cls: 'key' }, { h: 'Kind' }, { h: 'Model', opt: true },
@@ -5708,8 +6218,10 @@ async function exportXlsx() {
     [],
     [HD('Air and control'), HD(''), HD('')],
     ['Ductwork', N2(t.ductM), 'm'],
-    ['Air moved', N2(t.airLps), 'l/s — the ducted units at their design fan speeds'],
+    ['Air moved', N2(t.airLps), 'l/s — ducted units and HRVs at their design fan speeds'],
     ['Duct sections', t.ducts, ''],
+    ['HRV', t.hrv, 'standalone — not on a refrigerant system'],
+    ['Inline heaters', t.heaters, ''],
     ['Outlets', t.outlets, ''],
     ['Controllers', t.controllers, ''],
     [],
@@ -5800,30 +6312,34 @@ async function exportXlsx() {
     HD('Heating kW'), HD('Height m aff'), HD('Width m'), HD('Depth m'), HD('Angle deg'),
     HD('Size set by hand'), HD('System'), HD('Pipe run one way m'),
     HD('Sections back'), HD('Route'), HD('Room'), HD('Piped')]];
-  const order = ['condenser', 'bc', 'indoor'];
-  S.nodes.filter(n => n.type !== 'branch')
-    .sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type)
+  const order = ['condenser', 'bc', 'indoor', 'hrv', 'heater'];
+  S.nodes.filter(n => n.type !== 'branch' && n.type !== 'djoint' && n.type !== 'outlet' && n.type !== 'controller')
+    .sort((a, b) => (order.indexOf(a.type) < 0 ? 9 : order.indexOf(a.type))
+      - (order.indexOf(b.type) < 0 ? 9 : order.indexOf(b.type))
       || String(a.name).localeCompare(String(b.name), 'en', { numeric: true }))
     .forEach(n => {
       const cond = n.sysId ? nodeById(n.sysId) : null;
-      const path = n.type === 'condenser' ? [] : pathToNode(n.id);
-      units.push([n.name || '',
-        n.type === 'condenser' ? 'Condenser' : n.type === 'bc'
-          ? (n.kind === 'single' ? 'Single BC box' : 'BC controller') : 'Indoor unit',
-        n.type === 'condenser' ? (SYSTEMS[n.system] || SYSTEMS.vrf2).label
-          : n.type === 'indoor' ? ((INDOOR_TYPES[n.unit] || {}).label || '') : '',
+      const path = (n.type === 'condenser' || n.type === 'hrv' || n.type === 'heater') ? [] : pathToNode(n.id);
+      const what = n.type === 'condenser' ? 'Condenser' : n.type === 'bc'
+          ? (n.kind === 'single' ? 'Single BC box' : 'BC controller')
+          : n.type === 'hrv' ? 'HRV' : n.type === 'heater' ? 'Inline heater' : 'Indoor unit';
+      const typ = n.type === 'condenser' ? (SYSTEMS[n.system] || SYSTEMS.vrf2).label
+          : n.type === 'indoor' ? ((INDOOR_TYPES[n.unit] || {}).label || '')
+          : n.type === 'hrv' ? 'Heat recovery' : n.type === 'heater' ? 'OA heater' : '';
+      units.push([n.name || '', what, typ,
         n.model || '',
-        n.type === 'bc' ? '' : N2(parseFloat(n.kw) || 0),
-        n.type === 'bc' ? '' : N2(parseFloat(n.kwHeat) || 0),
+        (n.type === 'bc' || n.type === 'hrv' || n.type === 'heater') ? '' : N2(parseFloat(n.kw) || 0),
+        n.type === 'heater' ? N2(parseFloat(n.kw) || 0)
+          : (n.type === 'bc' || n.type === 'hrv') ? '' : N2(parseFloat(n.kwHeat) || 0),
         N2(heightOf(n)),
         N2(unitFoot(n).w), N2(unitFoot(n).d), N2(unitFoot(n).rot),
         unitFoot(n).sized ? 'yes' : 'no',
         cond ? cond.name : (n.type === 'condenser' ? n.name : ''),
-        n.type === 'condenser' ? '' : N2(path.reduce((s, x) => s + x.lengthM, 0)),
-        n.type === 'condenser' ? '' : path.length,
+        (n.type === 'condenser' || n.type === 'hrv' || n.type === 'heater') ? '' : N2(path.reduce((s, x) => s + x.lengthM, 0)),
+        (n.type === 'condenser' || n.type === 'hrv' || n.type === 'heater') ? '' : path.length,
         path.map(segName).join(' → '),
         n.room || '',
-        n.type === 'condenser' ? 'n/a' : (n.reached ? 'yes' : 'NO')]);
+        n.type === 'condenser' || n.type === 'hrv' ? 'n/a' : (n.reached ? 'yes' : 'NO')]);
     });
 
   /* ---- Systems ---- */
@@ -5854,7 +6370,7 @@ async function exportXlsx() {
       .forEach(d => {
         const up = nodeById(d.up != null ? d.up : d.a);
         const dn = nodeById(d.down != null ? d.down : d.b);
-        duct.push([segName(d), x.unit.name, DUCT_KINDS[d.kind || 'supply'].label,
+        duct.push([segName(d), x.unit.name, ductKindDef(d).label,
           up ? (up.name || nodeWord(up)) : '', dn ? (dn.name || nodeWord(dn)) : '',
           N2(d.lengthM), NB(d.flow), DUCT_SHAPES[d.shape || 'circ'], ductSizeLabel(d),
           d.area > 0 ? { v: Math.round(d.area * 10000) / 10000, s: 2 } : '',
@@ -5866,19 +6382,22 @@ async function exportXlsx() {
       });
   });
   S.ducts.filter(d => d.orphan).forEach(d =>
-    duct.push([segName(d), 'not on a unit', DUCT_KINDS[d.kind || 'supply'].label, '', '',
+    duct.push([segName(d), 'not on a unit', ductKindDef(d).label, '', '',
       N2(d.lengthM), '', DUCT_SHAPES[d.shape || 'circ'], ductSizeLabel(d)]));
   if (S.ducts.length) duct.push([B('Total'), '', '', '', '', NB(t.ductM)]);
 
   /* ---- Outlets ---- */
-  const outl = [[HD('Outlet'), HD('Unit'), HD('Air'), HD('Type or model'), HD('Volume l/s'),
+  const outl = [[HD('Outlet'), HD('Unit'), HD('Air'), HD('Grille'), HD('Face mm'),
+    HD('Type or model'), HD('Volume l/s'), HD('Face velocity m/s'),
     HD('Set or even share'), HD('Height m aff'), HD('Room'), HD('Ducted')]];
   S.nodes.filter(n => n.type === 'outlet')
     .sort((a, b) => String(a.name).localeCompare(String(b.name), 'en', { numeric: true }))
     .forEach(o => {
       const u = o.unitId ? nodeById(o.unitId) : null;
-      outl.push([o.name || '', u ? u.name : '', DUCT_KINDS[o.kind || 'supply'].label,
-        o.model || '', NB(o.flow || 0), o.auto ? 'even share' : 'set',
+      outl.push([o.name || '', u ? u.name : '', ductKindDef(o).label,
+        grilleOf(o).label, faceSizeLabel(o),
+        o.model || '', NB(o.flow || 0), o.faceVel > 0 ? N2(o.faceVel) : '',
+        o.auto ? 'even share' : 'set',
         N2(heightOf(o)), o.room || '', o.reached ? 'yes' : 'NO']);
     });
   /* Outlets set out as a count on a length of duct rather than placed one by
@@ -5886,9 +6405,29 @@ async function exportXlsx() {
   S.ducts.filter(d => (d.nOutlets || 0) > 0).forEach(d => {
     const u = d.unitId ? nodeById(d.unitId) : null;
     outl.push([segName(d) + (d.sock ? ' (sock)' : ' (' + d.nOutlets + ' on the section)'),
-      u ? u.name : '', DUCT_KINDS[d.kind || 'supply'].label, '',
-      NB(d.takeOff), (parseFloat(d.outletLps) || 0) > 0 ? 'set' : 'even share',
+      u ? u.name : '', ductKindDef(d).label, '', '',
+      '', NB(d.takeOff), '',
+      (parseFloat(d.outletLps) || 0) > 0 ? 'set' : 'even share',
       N2(vertexH(d, 0)), '', 'yes']);
+  });
+
+  /* ---- Ventilation (HRV) ---- */
+  const vent = [[HD('HRV'), HD('Model'), HD('Design speed'), HD('Design l/s'), HD('Pa'),
+    HD('Low l/s'), HD('Med l/s'), HD('High l/s'), HD('Open return'),
+    HD('OA l/s'), HD('EA l/s'), HD('SA l/s'), HD('RA l/s'),
+    HD('Duct m'), HD('Outlets'), HD('Rooms')]];
+  (S.ductSystems || []).filter(x => x.plant === 'hrv').forEach(x => {
+    const n = x.unit;
+    const rooms = (x.rooms || []).filter(r => r.room !== '(no room)')
+      .map(r => r.room + ' ' + fmt(r.sa || 0, 0) + '/' + fmt(r.ra || 0, 0)).join('; ');
+    vent.push([n.name || '', n.model || '', x.speed, NB(x.total), x.pa ? N2(x.pa) : '',
+      fanAt(n, 'low').v || '', fanAt(n, 'med').v || '', fanAt(n, 'high').v || '',
+      x.openReturn ? 'yes' : 'no',
+      x.streams.oa ? NB(x.streams.oa.delivered) : '',
+      x.streams.ea ? NB(x.streams.ea.delivered) : '',
+      x.streams.sa ? NB(x.streams.sa.delivered) : '',
+      x.streams.ra ? NB(x.streams.ra.delivered) : '',
+      N2(x.lengthM), x.nOutlets, rooms]);
   });
 
   /* ---- Controllers ---- */
@@ -5915,7 +6454,9 @@ async function exportXlsx() {
     { name: 'Summary', rows: sum, widths: [30, 22, 60] },
     { name: 'Ductwork', rows: duct,
       widths: [12, 14, 10, 14, 14, 11, 12, 13, 12, 13, 12, 18, 9, 14, 8, 13, 12, 30] },
-    { name: 'Outlets', rows: outl, widths: [26, 14, 10, 24, 11, 16, 12, 20, 9] },
+    { name: 'Outlets', rows: outl, widths: [18, 14, 10, 18, 12, 22, 11, 14, 16, 12, 18, 9] },
+    { name: 'Ventilation', rows: vent,
+      widths: [12, 18, 12, 12, 8, 10, 10, 10, 12, 10, 10, 10, 10, 10, 9, 40] },
     { name: 'Controllers', rows: ctls, widths: [14, 22, 18, 12, 12, 44, 26] },
     { name: 'Pipe sections', rows: pipe,
       widths: [12, 16, 16, 16, 7, 9, 9, 11, 10, 12, 12, 10, 12, 11, 12, 10, 12, 12, 13, 12, 8, 34] },
@@ -5950,6 +6491,7 @@ async function exportXlsx() {
   const drop = [];
   if (!S.ducts.length) drop.push('Ductwork');
   if (outl.length < 2) drop.push('Outlets');
+  if (vent.length < 2) drop.push('Ventilation');
   if (ctls.length < 2) drop.push('Controllers');
   const bytes = buildWorkbook(sheets.filter(x => drop.indexOf(x.name) < 0));
   downloadBlob(safeName(S.ref) + ' — AC Trace — ' + S.date + '.xlsx', bytes,
@@ -6226,11 +6768,14 @@ function projectBundle(withImg) {
   }));
   // everything solve() works out comes back from the geometry, so none of it
   // is written to the file
-  out.nodes.forEach(n => { delete n.reached; delete n.sysId; delete n.depth; });
+  out.nodes.forEach(n => {
+    delete n.reached; delete n.sysId; delete n.depth; delete n.unitId;
+    delete n.flow; delete n.auto; delete n.faceVel; delete n.faceArea;
+  });
   out.segs.forEach(s => ['up', 'down', 'parentSeg', 'depth', 'orphan', 'sysId', 'afterBc',
     'kw', 'nIndoor', 'routeM', 'rise', 'riseM', 'lengthM', 'pipes', 'pipeM', 'role']
     .forEach(k => delete s[k]));
-  (out.ducts || []).forEach(d => ['up', 'down', 'orphan', 'unitId', 'lengthM', 'routeM', 'riseM',
+  (out.ducts || []).forEach(d => ['up', 'down', 'orphan', 'unitId', 'lengthM', 'routeM', 'rise', 'riseM',
     'flow', 'takeOff', 'vel', 'area', 'nOutlets', 'perOutlet', 'perMetre']
     .forEach(k => delete d[k]));
   return out;
@@ -6342,6 +6887,8 @@ function loadProject(data) {
   S.pxPerM = data.pxPerM || 0; S.calib = data.calib || null;
   S.rotation = data.rotation || 0;
   S.nodes = data.nodes || []; S.segs = data.segs || []; S.ducts = data.ducts || [];
+  S.ducts.forEach(d => { d.kind = ductKind(d.kind); });
+  S.nodes.forEach(n => { if (n.type === 'outlet') n.kind = ductKind(n.kind); });
   S.nextId = data.nextId || (Math.max(0, ...S.nodes.map(n => n.id), ...S.segs.map(s => s.id),
     ...S.ducts.map(d => d.id)) + 1);
   if (data.settings) Object.assign(S.settings, data.settings);
@@ -6386,8 +6933,11 @@ function projectDialog() {
     + '<div class="row2">'
     + '<label class="fld"><span>Indoor unit</span><input type="number" id="pHi" step="0.05" value="' + s.indoorHeight + '"></label>'
     + '<label class="fld"><span>BC box</span><input type="number" id="pHb" step="0.05" value="' + s.bcHeight + '"></label></div>'
-    + '<label class="fld"><span>Ductwork <em>ducts usually run above the pipe</em></span>'
+    + '<div class="row2">'
+    + '<label class="fld"><span>Ductwork <em>usually above the pipe</em></span>'
     + '<input type="number" id="pHd" step="0.05" value="' + (s.ductHeight || 3.4) + '"></label>'
+    + '<label class="fld"><span>HRV and heater</span>'
+    + '<input type="number" id="pHrv" step="0.05" value="' + (s.hrvHeight || 2.9) + '"></label></div>'
     + '<div class="note">These are only the starting figures. Every unit, and every point along every '
     + 'run, carries its own height and can be changed from the inspector.</div>'
     + '<label class="fld"><span>Default indoor duty <em>kW, on a new unit</em></span>'
@@ -6429,6 +6979,7 @@ function projectDialog() {
     s.indoorHeight = parseFloat(el('pHi').value) || 0;
     s.bcHeight = parseFloat(el('pHb').value) || 0;
     s.ductHeight = parseFloat(el('pHd').value) || 0;
+    s.hrvHeight = parseFloat(el('pHrv').value) || 0;
     s.defaultKw = parseFloat(el('pKw').value) || 0;
     s.insulation = el('pIns').value;
     s.ortho = el('pOrtho').checked;
@@ -6499,6 +7050,13 @@ function stepsDialog() {
         + 'and the rest re-share what is left. A section can carry a count of outlets instead of '
         + 'placing each one, and ticking <b>Ventilated sock</b> spreads the air evenly along the whole '
         + 'length and reports it per metre. Give a section a size and the velocity comes with it.')
+    + step(S.nodes.some(n => n.type === 'hrv'), 'Heat recovery ventilation',
+        '<b>HRV</b> places a standalone box — not on a refrigerant system. Type low, medium and high '
+        + 'l/s, tick the speed, then trace four airs: outdoor and exhaust to outside, supply and return '
+        + 'to the rooms. Pick the grille (circular, 600×600, egg crate, open return, louvre). Drop an '
+        + '<b>inline heater</b> on the outdoor-air run if there is one. Tick <b>Open return</b> when '
+        + 'the unit itself is the return. Each stream shares the ticked volume; a duct size gives '
+        + 'velocity, a grille face gives face velocity.')
     + step(S.nodes.some(n => n.type === 'controller'), 'Controllers', '<b>Control</b> places one '
         + 'wherever it goes — one for the lot, or several in different rooms. Tick the units each one '
         + 'drives; selecting it draws a dashed leader to every one of them.')
@@ -6507,9 +7065,9 @@ function stepsDialog() {
         + 'the lot. Sizes are the imperial steps refrigerant pipe is actually bought in, 1/4" to 1 5/8". '
         + 'Insulation is 1/2" wall by default, 3/8" where there is no room for it. All of it goes to '
         + 'the Excel report, including a Materials sheet totalling every line by size for ordering.')
-    + step(false, 'Check, then report', 'Check reads every system against its own type. The PDF report '
-        + 'carries the schedule, the layout plan and the 3D plan; the Excel report carries the same '
-        + 'figures as columns you can work with.')
+    + step(false, 'Check, then report', 'Check reads every refrigerant system against its own type, '
+        + 'and every HRV against its four streams. The PDF report carries the schedule, the layout '
+        + 'plan and the 3D plan; the Excel report carries the same figures as columns you can work with.')
     + '</ol>'
     + '<div class="note">Line sizes are the manufacturer’s. This tool measures the route, keeps the '
     + 'heights honest and names every section; it does not size refrigerant pipe, and nothing in it '
@@ -6517,7 +7075,7 @@ function stepsDialog() {
     + '<h4>Keys</h4>'
     + '<table class="mini"><tbody>'
     + '<tr><td class="mono">V H S C I B T J</td><td>select, pan, scale, condenser, indoor, BC box, trace, joint</td></tr>'
-    + '<tr><td class="mono">D O K</td><td>duct, outlet, controller</td></tr>'
+    + '<tr><td class="mono">D O K R</td><td>duct, outlet, controller, HRV</td></tr>'
     + '<tr><td class="mono">Alt</td><td>held: flip the corner lock, or cut a joint exactly where the cursor is</td></tr>'
     + '<tr><td class="mono">Shift</td><td>held while dragging a handle: keep a unit’s shape, or snap its angle to 15°</td></tr>'
     + '<tr><td class="mono">O</td><td>square up on or off</td></tr>'
@@ -6624,6 +7182,10 @@ sc.addEventListener('pointerdown', ev => {
   if (tool === 'bc')        { addBc(p);        return; }
   if (tool === 'outlet')    { addOutlet(p);    return; }
   if (tool === 'ctl')       { addController(p); return; }
+  if (tool === 'hrv') {
+    if (armedHrv === 'heater') addHeater(p); else addHrv(p);
+    return;
+  }
 
   if (tool === 'duct') {
     if (!draft) {

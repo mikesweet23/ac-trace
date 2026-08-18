@@ -27,11 +27,17 @@ dimension, then place the plant and trace the routes between it.
 - **3D view** to check the risers and the height differences.
 - **Check** reads every system against its own type and says what will not
   work: a multi split sharing a section, a 3-pipe VRF missing a BC box, a twin
-  split tee'd unequally.
+  split tee'd unequally. It also reads an HRV against its four air streams
+  and an inline heater against the outdoor-air run.
+- **HRV** — a standalone heat-recovery box, never on a refrigerant system.
+  Four airs (outdoor, exhaust, supply, return), grille types, an inline
+  heater as a box on the outdoor-air run, and room in/out totals.
 - **PDF report** — summary, system figures, layout plan, 3D plan and
-  elevation, and the schedule by system.
-- **Excel report** — the same figures as a real `.xlsx`, seven sheets,
-  including the layout plan and the 3D plan as pictures.
+  elevation, and the schedule by system. Ventilation is on the same document
+  when there is an HRV or ductwork.
+- **Excel report** — the same figures as a real `.xlsx`, including the
+  layout plan and the 3D plan as pictures. A *Ventilation* sheet appears
+  when there is an HRV.
 
 ## What it does not do
 
