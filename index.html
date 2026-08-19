@@ -1098,7 +1098,7 @@ const S = {
   refrigerant: 'R32',
   img: null,                 // { src, w, h, label }
   pxPerM: 0,                 // set by calibration
-  calib: null,               // { a:{x,y}, b:{x,y}, metres }
+  calib: null,               // { a:{x,y}, b:{x,y}, metres } — the two points on the sheet; hiding it keeps pxPerM
   rotation: 0,               // degrees already applied to the sheet, for the record
   nodes: [], segs: [], ducts: [], measures: [],
   nextId: 1,
@@ -2076,6 +2076,30 @@ function hitMeasure(p, tolPx) {
   });
   return best;
 }
+/* The scale strip is a reminder of the two points, not a tape. It has to be
+   hittable or there is no way to take it off once the scale is set — and
+   after a new sheet is loaded those pixels belong to the last drawing. */
+function hitCalib(p, tolPx) {
+  if (!S.calib) return null;
+  const tol = (tolPx || 14) / zoom;
+  const { a, b } = S.calib;
+  const r = nearestOnPoly([a, b], p);
+  if (!r) return null;
+  const k = 1 / zoom;
+  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+  const inLbl = p.x >= mx - 26 * k && p.x <= mx + 26 * k
+             && p.y >= my - 20 * k && p.y <= my - 5 * k;
+  if (inLbl) return { d: 0, r };
+  if (r.d < tol) return { d: r.d, r };
+  return null;
+}
+function hideScaleMark() {
+  if (!S.calib) return;
+  S.calib = null;
+  sel = null;
+  closeInspector();
+  toast('Scale mark hidden — the scale itself is unchanged');
+}
 /* Pulls to anything already on the sheet — a unit, a joint, a corner or a
    run — without cutting a joint into it. A tape is a note, not a connection. */
 function snapMeasureAt(p) {
@@ -2234,6 +2258,11 @@ function render() {
   // ---- calibration line ----
   if (S.calib) {
     const { a, b } = S.calib;
+    const picked = sel && sel.kind === 'calib';
+    if (picked) {
+      g.appendChild(mk('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+        stroke: 'var(--measure)', 'stroke-width': 10 * k, 'stroke-linecap': 'round', opacity: .32 }));
+    }
     g.appendChild(mk('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y,
       stroke: 'var(--measure)', 'stroke-width': 2 * k, 'stroke-dasharray': (7 * k) + ' ' + (4 * k) }));
     [a, b].forEach(p => g.appendChild(mk('line', { x1: p.x, y1: p.y - 8 * k, x2: p.x, y2: p.y + 8 * k,
@@ -3557,6 +3586,10 @@ function finishTrace(endNode, endOff) {
    ========================================================================== */
 function deleteSelected() {
   if (!sel) return;
+  if (sel.kind === 'calib') {
+    hideScaleMark();
+    return;
+  }
   if (sel.kind === 'tape') {
     const m = measureById(sel.id);
     if (!m) return;
@@ -3734,6 +3767,9 @@ function openInspector() {
     const m = measureById(sel.id);
     if (!m) { closeInspector(); return; }
     kind = 'Tape measure'; name = measureName(m); html = tapeForm(m);
+  } else if (sel.kind === 'calib') {
+    if (!S.calib) { closeInspector(); return; }
+    kind = 'Scale mark'; name = fmt(S.calib.metres, 2) + ' m'; html = calibForm();
   }
   el('insKind').textContent = kind;
   el('insName').textContent = name;
@@ -4239,6 +4275,21 @@ function tapeForm(m) {
     + 'or a duct, and it does not include rise. Use Trace or Duct when the length has to go on '
     + 'the schedule.</div>';
   return html + rowBtns(false);
+}
+
+function calibForm() {
+  const c = S.calib;
+  const px = dist(c.a, c.b);
+  return derivedBox([
+    ['<b>This mark</b>', '<b>' + fmt(c.metres, 2) + ' m</b>'],
+    ['On the sheet', fmt(px, 0) + ' px'],
+    ['Scale', fmt(S.pxPerM, 1) + ' px/m'],
+  ])
+  + '<div class="note">The two points you clicked when setting the scale — not a tape, and not '
+  + 'part of the take-off. Hide it and the scale itself stays. Set scale again if the figure is wrong.</div>'
+  + '<div style="display:flex;gap:8px;margin-top:14px">'
+  + '<div style="flex:1"></div>'
+  + '<button class="btn ghost sm" id="fDel" style="color:var(--alarm)">Hide the mark</button></div>';
 }
 
 function branchForm(n) {
@@ -6982,6 +7033,13 @@ function showDrawing(opts) {
   ['bSched', 'bName', 'b3d', 'bCheck', 'bRotate', 'bPdf', 'bXls'].forEach(id => el(id).disabled = false);
   el('bOpenDwg').textContent = 'Change layout';
   el('bOpenDwg').title = 'Load a different layout — the scale has to be checked again';
+  /* The scale strip is two pixels on the last sheet. A new bitmap makes
+     those points a lie, so the graphic goes; the scale figure is asked
+     about separately and is what the lengths actually use. */
+  if (opts && opts.replaced && S.calib) {
+    S.calib = null;
+    if (sel && sel.kind === 'calib') sel = null;
+  }
   buildRail();
   setTimeout(() => { zoomFit(); render(); }, 40);
   if (scaleNeeded()) setTimeout(scaleGate, 260);
@@ -6995,6 +7053,8 @@ function scaleRecheck() {
       '<p style="margin-top:0">The scale from the last drawing is still set at '
     + '<strong class="mono">' + fmt(S.pxPerM, 1) + ' px/m</strong>. If this sheet is at a different '
     + 'scale or a different size, every traced length is now wrong.</p>'
+    + '<div class="note">The old scale mark has been taken off — those two points belonged to the last '
+    + 'sheet. Tapes stay with the take-off; select one and press Delete if it no longer belongs.</div>'
     + '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
     + '<button class="btn go" id="srNew">Set the scale again</button>'
     + '<button class="btn ghost" id="srKeep">Same scale, carry on</button></div>');
@@ -7363,6 +7423,10 @@ function projectDialog() {
     + chk('pHShow', s.showHeights !== false, 'Show heights and risers',
         'The height each section runs at, and a marker with the change wherever it steps.')
     + chk('pTShow', s.showTypes !== false, 'Show unit type', 'WM, CC9, CC6, DU or U1 under each indoor unit.')
+    + (S.calib
+        ? '<div style="margin-top:10px"><button class="btn ghost sm" type="button" id="pHideCal">Hide the scale mark</button>'
+          + '<div class="note" style="margin-top:8px">The dashed line from when the scale was set. It is not a tape. Hiding it keeps the scale.</div></div>'
+        : '')
 
     + '<div style="display:flex;gap:8px;margin-top:16px">'
     + '<button class="btn go" id="pOk">Done</button>'
@@ -7396,6 +7460,12 @@ function projectDialog() {
     toast('Saved');
   });
   el('pCancel').addEventListener('click', () => closeModal(true));
+  const hideCal = el('pHideCal');
+  if (hideCal) hideCal.addEventListener('click', () => {
+    hideScaleMark();
+    const wrap = hideCal.parentNode;
+    if (wrap) wrap.remove();
+  });
 }
 
 /* ==========================================================================
@@ -7424,7 +7494,8 @@ function stepsDialog() {
         + 'angle for a scan that is not square.')
     + step(done.scale, 'Set the scale', 'Two points a known distance apart, then the real dimension. '
         + 'Nothing can be placed until this is done, because a length off an uncalibrated drawing '
-        + 'means nothing.')
+        + 'means nothing. The dashed mark is only a reminder of those two points — select it and '
+        + 'press Delete to hide it; the scale stays. Changing the layout drops the old mark.')
     + step(done.cond, 'Place the condensers', 'Pick the system type first — split, multi, twin, triple, '
         + 'or one of the three VRF arrangements. The type decides what Check will allow.')
     + step(done.indoor, 'Place the indoor units', 'Wall, 900 or 600 cassette, ducted, or 1-way blow '
@@ -7551,10 +7622,12 @@ sc.addEventListener('pointerdown', ev => {
     const h = hitSeg(p);
     const hd = hitSeg(p, 14, 'duct');
     const tm = hitMeasure(p, 12);
+    const tc = hitCalib(p, 14);
     const cand = [];
     if (h) cand.push({ d: h.r.d, go: () => select('seg', h.seg.id) });
     if (hd) cand.push({ d: hd.r.d, go: () => select('duct', hd.seg.id) });
     if (tm) cand.push({ d: tm.r.d, go: () => select('tape', tm.measure.id) });
+    if (tc) cand.push({ d: tc.d, go: () => select('calib') });
     if (cand.length) { cand.sort((a, b) => a.d - b.d); cand[0].go(); return; }
     sel = null; closeInspector();
     return;

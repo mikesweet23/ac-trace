@@ -198,6 +198,13 @@ stays disabled (including Tape). Swapping the sheet behind an existing
 take-off asks whether the scale still holds rather than gating, so a
 revision at the same scale does not throw the take-off away.
 
+The dashed scale strip (`S.calib`) is a reminder of the two points, not a
+tape and not part of the take-off. It can be selected and hidden (Delete
+or the inspector) without touching `pxPerM`. Changing the layout drops
+the graphic — those pixels belonged to the last sheet — and asks whether
+the scale figure still holds. Set scale again if it does not. Do not
+clear `pxPerM` just because the mark is hidden.
+
 ### Tape measure is not a pipe
 
 **Tape** (`tool: 'tape'`, key `M`) is a plan annotation: click along a
@@ -437,11 +444,16 @@ Five minutes, and it exercises everything:
 1. Open `index.html`. Load any PDF or image. Confirm the **scale gate**
    appears and that the condenser, indoor, BC, trace, joint and tape tools
    are all disabled behind it.
-2. Set a scale. Arm **Tape** (M). Click three corners of a room and
+2. Set a scale. Confirm the dashed scale mark can be **selected and
+   hidden** (Delete or Hide the mark) and that *Route one way* is
+   unchanged. Arm **Tape** (M). Click three corners of a room and
    finish. Confirm the label is the plan length, that it is not a pipe
-   section, and that Select then Delete removes it. **Rotate 90°** and
-   confirm the drawing turns, the tape turns with it, the scale strip is
-   unchanged, and *Route one way* in the status strip is unchanged.
+   section, and that Select then Delete removes it. **Change layout**
+   to a different sheet, keep the same scale: the old scale mark is
+   gone (those points belonged to the last sheet); a leftover tape can
+   still be selected and deleted. **Rotate 90°** and confirm the
+   drawing turns, the tape turns with it, and *Route one way* is
+   unchanged.
 3. Place a condenser set to **VRF 3-pipe**, two indoor units of different
    types, and a single BC box in front of each. Trace them up. Confirm the
    sections from the condenser show **3** in the pipe badge and the sections
