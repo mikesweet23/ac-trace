@@ -24,6 +24,9 @@ dimension, then place the plant and trace the routes between it.
 - **Every section named** — `M1, M2` mains, `B1, B2` branches, `B1a` sub-
   branches, sections numbered from the condenser — and every name, unit type,
   model and duty editable.
+- **Tape measure** on the plan, once the scale is set: click around corners,
+  keep the length, select it to delete it. Plan metres only — not a pipe or
+  a duct, and not a rise.
 - **3D view** to check the risers and the height differences.
 - **Check** reads every system against its own type and says what will not
   work: a multi split sharing a section, a 3-pipe VRF missing a BC box, a twin

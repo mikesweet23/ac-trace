@@ -268,6 +268,8 @@
   .hint .x:hover { color: #fff; }
   .hint .hopt { display: none; align-items: center; gap: 6px; font-size: 11.5px; color: #cdd3dc; white-space: nowrap; }
   .hint.trace .hopt { display: flex; }
+  .hint.tape .hopt { display: flex; }
+  .hint.tape .hgt { display: none; }
   #hintAngle {
     font-family: 'Azeret Mono', monospace; font-size: 11.5px; font-weight: 600;
     background: rgba(255,255,255,.10); border-radius: 3px; padding: 3px 7px; min-width: 56px;
@@ -1098,7 +1100,7 @@ const S = {
   pxPerM: 0,                 // set by calibration
   calib: null,               // { a:{x,y}, b:{x,y}, metres }
   rotation: 0,               // degrees already applied to the sheet, for the record
-  nodes: [], segs: [], ducts: [],
+  nodes: [], segs: [], ducts: [], measures: [],
   nextId: 1,
   settings: {
     autoName: true,
@@ -1163,7 +1165,8 @@ const undoStack = [];
 let undoSuspended = false;
 
 function undoSnapshot() {
-  return JSON.stringify({ nodes: S.nodes, segs: S.segs, ducts: S.ducts, nextId: S.nextId });
+  return JSON.stringify({ nodes: S.nodes, segs: S.segs, ducts: S.ducts,
+    measures: S.measures, nextId: S.nextId });
 }
 /* Call before the change, with a few words for the button's tooltip. */
 function pushUndo(label) {
@@ -1182,7 +1185,8 @@ function undo() {
   const step = undoStack.pop();
   if (!step) { toast('Nothing to undo'); return; }
   const d = JSON.parse(step.state);
-  S.nodes = d.nodes; S.segs = d.segs; S.ducts = d.ducts || []; S.nextId = d.nextId;
+  S.nodes = d.nodes; S.segs = d.segs; S.ducts = d.ducts || [];
+  S.measures = d.measures || []; S.nextId = d.nextId;
   draft = null; sel = null;
   closeInspector();
   refreshUndoBtn();
@@ -2049,6 +2053,70 @@ function hitJointAt(p, tolPx) {
   return null;
 }
 
+/* ---------- tape measure ----------
+   A plan length you can leave on the sheet, not a pipe and not a duct.
+   The figure is the polyline on the drawing. It does not include rise,
+   and it must never look as though it does. */
+function measureById(id) { return (S.measures || []).find(m => m.id === id) || null; }
+function measureName(m) { return m ? (m.name || m.ref || 'Tape') : ''; }
+function measureLenM(m) { return S.pxPerM > 0 ? polyLenPx(m.pts) / S.pxPerM : 0; }
+function nextTapeName() {
+  let i = 0;
+  const used = {};
+  (S.measures || []).forEach(m => { used[String(m.name || m.ref || '').toUpperCase()] = true; });
+  do { i++; } while (used[('TAPE ' + i).toUpperCase()]);
+  return 'Tape ' + i;
+}
+function hitMeasure(p, tolPx) {
+  const tol = (tolPx || 10) / zoom;
+  let best = null;
+  (S.measures || []).forEach(m => {
+    const r = nearestOnPoly(m.pts, p);
+    if (r && r.d < tol && (!best || r.d < best.r.d)) best = { measure: m, r };
+  });
+  return best;
+}
+/* Pulls to anything already on the sheet — a unit, a joint, a corner or a
+   run — without cutting a joint into it. A tape is a note, not a connection. */
+function snapMeasureAt(p) {
+  const tol = SNAP_PX / zoom;
+  let best = null;
+  const take = (d, at) => { if (d <= tol && at && (!best || d < best.d)) best = { d, at: { x: at.x, y: at.y } }; };
+  S.nodes.forEach(n => {
+    if (n.type === 'branch' || n.type === 'djoint' || n.type === 'controller') {
+      take(dist(n, p), n); return;
+    }
+    const sn = snapNodeAt(n, p);
+    if (sn && sn.at) take(dist(sn.at, p), sn.at);
+  });
+  S.segs.concat(S.ducts || []).forEach(sg => {
+    (sg.pts || []).forEach(pt => take(dist(pt, p), pt));
+    const r = nearestOnPoly(sg.pts, p);
+    if (r && r.q) take(r.d, r.q);
+  });
+  (S.measures || []).forEach(m => {
+    (m.pts || []).forEach(pt => take(dist(pt, p), pt));
+  });
+  return best;
+}
+function previewMeasurePoint(p) {
+  const sn = snapMeasureAt(p);
+  if (sn) return sn.at;
+  const prev = draft && draft.pts.length ? draft.pts[draft.pts.length - 1] : null;
+  return orthoPoint(prev, p);
+}
+function finishMeasure() {
+  if (!draft || draft.kind !== 'tape') return false;
+  const pts = dedupePts(draft.pts);
+  draft = null;
+  if (pts.length < 2) { render(); return true; }
+  pushUndo('add a tape measure');
+  const m = { id: nid(), pts, name: '', ref: nextTapeName(), note: '' };
+  S.measures.push(m);
+  select('tape', m.id);
+  return true;
+}
+
 /* How far apart the pipes of one section are drawn. Zoomed out this is a
    constant on screen so the set reads as one route; zoomed in it becomes a
    real separation, which is what lets you see three pipes as three pipes. */
@@ -2099,6 +2167,53 @@ function offsetPoly(pts, off) {
   return out;
 }
 function pathOf(pts) { return pts.map((p, i) => (i ? 'L' : 'M') + p.x + ' ' + p.y).join(' '); }
+
+function drawMeasure(g, m, k, live) {
+  const pts = m.pts;
+  if (!pts || pts.length < 2) return;
+  const picked = !live && sel && sel.kind === 'tape' && sel.id === m.id;
+  const ink = 'var(--measure)';
+  if (picked) {
+    g.appendChild(mk('path', { d: pathOf(pts), fill: 'none', stroke: ink,
+      'stroke-width': 8 * k, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: .28 }));
+  }
+  g.appendChild(mk('path', { d: pathOf(pts), fill: 'none', stroke: ink,
+    'stroke-width': (live ? 2.2 : 1.8) * k,
+    'stroke-dasharray': live ? (7 * k) + ' ' + (5 * k) : (2.2 * k) + ' ' + (3.2 * k),
+    'stroke-linecap': 'butt', 'stroke-linejoin': 'miter' }));
+  pts.forEach((p, i) => {
+    g.appendChild(mk('circle', { cx: p.x, cy: p.y, r: (i === 0 || i === pts.length - 1 ? 3.4 : 2.6) * k,
+      fill: i === pts.length - 1 && live ? ink : 'var(--white)', stroke: ink, 'stroke-width': 1.5 * k }));
+  });
+  if (!(S.pxPerM > 0)) return;
+  const legs = [];
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const L = dist(a, b) / S.pxPerM;
+    if (L < 0.02) continue;
+    legs.push({ a, b, L, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } });
+  }
+  const total = measureLenM(m);
+  const showLegs = legs.length > 1;
+  legs.forEach(leg => {
+    if (!showLegs || dist(leg.a, leg.b) < 28 * k) return;
+    const lbl = fmt(leg.L, 2) + ' m';
+    const wPx = lbl.length * 6.2 + 10;
+    g.appendChild(mk('rect', { x: leg.mid.x - wPx * k / 2, y: leg.mid.y - 18 * k,
+      width: wPx * k, height: 14 * k, rx: 2 * k, fill: ink, opacity: .92 }));
+    g.appendChild(mk('text', { x: leg.mid.x, y: leg.mid.y - 8 * k, 'text-anchor': 'middle',
+      'font-size': 9.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+      fill: '#fff' }, lbl));
+  });
+  const last = pts[pts.length - 1];
+  const tot = (m.ref || measureName(m)) + '  ' + fmt(total, 2) + ' m';
+  const tw = tot.length * 6.4 + 12;
+  g.appendChild(mk('rect', { x: last.x + 10 * k, y: last.y - 20 * k, width: tw * k, height: 16 * k,
+    rx: 2 * k, fill: ink }));
+  g.appendChild(mk('text', { x: last.x + 16 * k, y: last.y - 8.5 * k,
+    'font-size': 10.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+    fill: '#fff' }, tot));
+}
 
 /* ==========================================================================
    DRAW
@@ -2183,6 +2298,23 @@ function render() {
         fill: '#fff' }, lbl));
     }
   }
+  if (draft && draft.kind === 'tape' && draft.pts.length) {
+    const pts = hoverPt ? draft.pts.concat([previewMeasurePoint(hoverPt)]) : draft.pts;
+    drawMeasure(g, { pts, ref: 'Tape' }, k, true);
+    if (pts.length > 1) {
+      const a = pts[pts.length - 2], b = pts[pts.length - 1];
+      let deg = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
+      deg = ((deg % 180) + 180) % 180;
+      const square = Math.abs(deg % 45) < 0.05 || Math.abs(deg % 45 - 45) < 0.05;
+      const box = el('hintAngle');
+      if (box) {
+        box.textContent = fmt(deg, 1) + '°';
+        box.classList.toggle('free', !square);
+        box.title = square ? 'Square: ' + fmt(deg, 0) + '° off horizontal'
+                           : 'A free angle — ' + fmt(deg, 1) + '° off horizontal';
+      }
+    }
+  }
   if (draft && draft.kind === 'calib' && draft.pts.length === 1 && hoverPt) {
     const a = draft.pts[0];
     g.appendChild(mk('line', { x1: a.x, y1: a.y, x2: hoverPt.x, y2: hoverPt.y,
@@ -2212,11 +2344,16 @@ function render() {
     });
   });
 
+  /* Tapes sit on top of the take-off: they are notes on the sheet, not a
+     third network, and they have to stay readable over the pipework. */
+  (S.measures || []).forEach(m => drawMeasure(g, m, k, false));
+
   ov.innerHTML = '';
   ov.appendChild(g);
   const hb = el('hint');
   if (hb) hb.classList.toggle('drawing',
-    !!(draft && (draft.kind === 'trace' || draft.kind === 'duct') && draft.pts.length > 1));
+    !!(draft && (draft.kind === 'trace' || draft.kind === 'duct' || draft.kind === 'tape')
+      && draft.pts.length > 1));
   renderStatus();
   autosave();
 }
@@ -2775,6 +2912,7 @@ const TOOLS = [
   { id: 'select',    label: 'Select', key: 'V', icon: 'M4 2l14 8-6 1.6L9.4 18z' },
   { id: 'pan',       label: 'Pan',    key: 'H', icon: 'M10 2v8M6 5v6M14 5v6M3 9c0 5 3 9 7 9s7-4 7-9' },
   { id: 'calib',     label: 'Scale',  key: 'S', icon: 'M2 7h16v6H2zM6 7v4M10 7v6M14 7v4' },
+  { id: 'tape',      label: 'Tape',   key: 'M', icon: 'M2 8h16v4H2zM6 8v3M10 8v4M14 8v3' },
   { id: 'condenser', label: 'Cond',   key: 'C', icon: 'M2 5h16v10H2zM6.5 10a1.5 1.5 0 103 0 1.5 1.5 0 10-3 0M13 8.5v3' },
   { id: 'indoor',    label: 'Indoor', key: 'I', icon: 'M3 6h14v8H3zM10 8v4M8 10h4M6 6v8M14 6v8' },
   { id: 'bc',        label: 'BC box', key: 'B', icon: 'M3 7h14v6H3zM7 13v4M13 13v4M10 3v4' },
@@ -2788,7 +2926,7 @@ const TOOLS = [
 
 /* Nothing can be placed or traced until the drawing has a scale: a length
    measured off an uncalibrated drawing means nothing at all. */
-const NEEDS_SCALE = ['condenser', 'indoor', 'bc', 'trace', 'joint', 'duct', 'outlet', 'ctl', 'hrv'];
+const NEEDS_SCALE = ['tape', 'condenser', 'indoor', 'bc', 'trace', 'joint', 'duct', 'outlet', 'ctl', 'hrv'];
 
 let armedIndoor = 'cass600';
 let armedBc = 'main';
@@ -2798,7 +2936,7 @@ function buildRail() {
   const rail = el('rail');
   rail.innerHTML = '';
   TOOLS.forEach((t, i) => {
-    if (i === 2 || i === 3 || i === 6 || i === 8) rail.appendChild(document.createElement('hr'));
+    if (i === 2 || i === 4 || i === 7 || i === 9) rail.appendChild(document.createElement('hr'));
     const b = document.createElement('button');
     const locked = scaleNeeded() && NEEDS_SCALE.indexOf(t.id) >= 0;
     b.className = 'tool' + (tool === t.id ? ' on' : '');
@@ -2817,6 +2955,8 @@ function buildRail() {
    on one row over the drawing rather than becoming a block that covers it. */
 const HINTS = {
   calib: 'Click two points a known distance apart, then type the real dimension.',
+  tape: 'Click along what you want to measure. Corners lock to the square; <kbd>Alt</kbd> frees one. '
+      + '<b>Double-click</b> or <b>Finish</b> to keep it. Select it afterwards to delete it.',
   condenser: 'Pick the system type, then click where the condenser sits.',
   indoor: 'Pick the unit type, then click where it sits. Select it afterwards to drag it to size.',
   bc: 'Pick the box, then click where it sits.',
@@ -2864,6 +3004,7 @@ function setTool(t) {
   if (HINTS[t]) { el('hintTxt').innerHTML = HINTS[t]; h.classList.add('on'); }
   else h.classList.remove('on');
   h.classList.toggle('trace', t === 'trace' || t === 'duct');
+  h.classList.toggle('tape', t === 'tape');
   el('orthoChk').checked = !!S.settings.ortho;
   el('hgtIn').value = fmt(activeHeight(), 2);
   const pal = ['indoor', 'bc', 'condenser', 'outlet', 'duct', 'ctl', 'hrv'].indexOf(t) >= 0;
@@ -3416,6 +3557,15 @@ function finishTrace(endNode, endOff) {
    ========================================================================== */
 function deleteSelected() {
   if (!sel) return;
+  if (sel.kind === 'tape') {
+    const m = measureById(sel.id);
+    if (!m) return;
+    asOneUndo('delete ' + measureName(m), () => {
+      S.measures = (S.measures || []).filter(x => x.id !== m.id);
+    });
+    sel = null; closeInspector(); render();
+    return;
+  }
   if (sel.kind === 'duct') {
     const d = ductById(sel.id);
     if (!d) return;
@@ -3580,6 +3730,10 @@ function openInspector() {
     const d = ductById(sel.id);
     if (!d) { closeInspector(); return; }
     kind = 'Duct section'; name = segName(d); html = ductForm(d);
+  } else if (sel.kind === 'tape') {
+    const m = measureById(sel.id);
+    if (!m) { closeInspector(); return; }
+    kind = 'Tape measure'; name = measureName(m); html = tapeForm(m);
   }
   el('insKind').textContent = kind;
   el('insName').textContent = name;
@@ -4055,6 +4209,38 @@ function ductForm(d) {
 }
 
 /* ---------- branch joint ---------- */
+function tapeForm(m) {
+  const total = measureLenM(m);
+  const legs = [];
+  for (let i = 1; i < (m.pts || []).length; i++) {
+    const a = m.pts[i - 1], b = m.pts[i];
+    legs.push(S.pxPerM > 0 ? dist(a, b) / S.pxPerM : 0);
+  }
+  let html = '<label class="fld"><span>Name <em>blank uses ' + esc(m.ref || 'Tape') + '</em></span>'
+    + '<input id="fName" value="' + esc(m.name || '') + '" placeholder="' + esc(m.ref || '') + '"></label>';
+  html += '<div class="fld"><span>Corners on the plan</span><div class="hpts">'
+    + (m.pts || []).map((p, i) => {
+        const prev = i > 0 ? fmt(legs[i - 1], 2) + ' m from last' : 'start';
+        return '<div class="hpt"><span class="ix">' + (i + 1) + '</span>'
+          + '<span></span>'
+          + '<span class="rise">' + prev + '</span>'
+          + (i > 0 && i < m.pts.length - 1
+              ? '<button data-tapedel="' + i + '" title="Remove this corner">&times;</button>'
+              : '<span></span>')
+          + '</div>';
+      }).join('')
+    + '</div></div>';
+  html += derivedBox([
+    ['<b>Plan length</b>', '<b>' + fmt(total, 2) + ' m</b>'],
+    ['Legs', String(legs.length)],
+  ]);
+  html += '<label class="fld"><span>Note</span><input id="fTapeNote" value="' + esc(m.note || '') + '"></label>';
+  html += '<div class="note">The plan length only — the polyline on the drawing. It is not a pipe '
+    + 'or a duct, and it does not include rise. Use Trace or Duct when the length has to go on '
+    + 'the schedule.</div>';
+  return html + rowBtns(false);
+}
+
 function branchForm(n) {
   const duct = n.type === 'djoint';
   const nb = duct ? ductNeighbours(n.id) : neighbours(n.id);
@@ -4178,7 +4364,32 @@ function wireInspector() {
       render(); openInspector();
     }));
 
-  on('fName', 'input', e => { n.name = e.target.value; render(); el('insName').textContent = n.name; });
+  on('fName', 'input', e => {
+    if (sel && sel.kind === 'tape') {
+      const m = measureById(sel.id);
+      if (!m) return;
+      m.name = e.target.value;
+      el('insName').textContent = measureName(m);
+      render();
+      return;
+    }
+    if (!n) return;
+    n.name = e.target.value; render(); el('insName').textContent = n.name;
+  });
+  on('fTapeNote', 'input', e => {
+    const m = measureById(sel && sel.id);
+    if (m) m.note = e.target.value;
+  });
+  el('insBody').querySelectorAll('[data-tapedel]').forEach(b =>
+    b.addEventListener('click', () => {
+      const m = measureById(sel && sel.id);
+      if (!m || !m.pts) return;
+      const i = parseInt(b.dataset.tapedel, 10);
+      if (!(i > 0) || i >= m.pts.length - 1) return;
+      pushUndo('remove a tape corner');
+      m.pts.splice(i, 1);
+      render(); openInspector();
+    }));
   on('fModel', 'input', e => { n.model = e.target.value; });
   on('fRoom', 'input', e => { n.room = e.target.value; });
   on('fKw', 'input', e => { n.kw = parseFloat(e.target.value) || 0; render(); });
@@ -5596,6 +5807,8 @@ function planCrop() {
     ys.push(n.y - half.y, n.y + half.y);
   });
   S.segs.forEach(sg => sg.pts.forEach(p => { xs.push(p.x); ys.push(p.y); }));
+  (S.ducts || []).forEach(d => (d.pts || []).forEach(p => { xs.push(p.x); ys.push(p.y); }));
+  (S.measures || []).forEach(m => (m.pts || []).forEach(p => { xs.push(p.x); ys.push(p.y); }));
   if (S.calib) { xs.push(S.calib.a.x, S.calib.b.x); ys.push(S.calib.a.y, S.calib.b.y); }
   if (xs.length < 2) return full;
 
@@ -6884,6 +7097,8 @@ function rotateDrawing(deg) {
     pushUndo('rotate the drawing ' + fmt(d, 0) + '°');
     S.nodes.forEach(move);
     S.segs.forEach(sg => sg.pts.forEach(move));
+    (S.ducts || []).forEach(d => d.pts.forEach(move));
+    (S.measures || []).forEach(m => m.pts.forEach(move));
     if (S.calib) { move(S.calib.a); move(S.calib.b); }
 
     S.img = { src: cv.toDataURL('image/png'), w: nw, h: nh, label: S.img.label };
@@ -6943,7 +7158,8 @@ function projectBundle(withImg) {
     ref: S.ref, client: S.client, engineer: S.engineer, date: S.date,
     refrigerant: S.refrigerant,
     img: withImg ? S.img : null, pxPerM: S.pxPerM, calib: S.calib, rotation: S.rotation,
-    nodes: S.nodes, segs: S.segs, ducts: S.ducts, nextId: S.nextId, settings: S.settings,
+    nodes: S.nodes, segs: S.segs, ducts: S.ducts, measures: S.measures,
+    nextId: S.nextId, settings: S.settings,
   }));
   // everything solve() works out comes back from the geometry, so none of it
   // is written to the file
@@ -6963,7 +7179,8 @@ function projectBundle(withImg) {
 function autosave() {
   clearTimeout(autoTimer);
   autoTimer = setTimeout(() => {
-    if (!S.img && !S.segs.length && !S.nodes.length && !S.ducts.length) return;
+    if (!S.img && !S.segs.length && !S.nodes.length && !S.ducts.length
+        && !(S.measures || []).length) return;
     try {
       localStorage.setItem(AUTO_KEY, JSON.stringify({
         at: Date.now(), ref: S.ref, project: projectBundle(false) }));
@@ -6997,7 +7214,8 @@ function offerAutosave() {
   if (!box) return false;
   const p = box.project;
   const segs = (p.segs || []).length, nodes = (p.nodes || []).length;
-  if (!segs && !nodes) return false;
+  const tapes = (p.measures || []).length;
+  if (!segs && !nodes && !tapes) return false;
   const when = new Date(box.at);
   const ago = Math.round((Date.now() - box.at) / 60000);
   const whenTxt = ago < 1 ? 'a moment ago'
@@ -7066,10 +7284,11 @@ function loadProject(data) {
   S.pxPerM = data.pxPerM || 0; S.calib = data.calib || null;
   S.rotation = data.rotation || 0;
   S.nodes = data.nodes || []; S.segs = data.segs || []; S.ducts = data.ducts || [];
+  S.measures = data.measures || [];
   S.ducts.forEach(d => { d.kind = ductKind(d.kind); });
   S.nodes.forEach(n => { if (n.type === 'outlet') n.kind = ductKind(n.kind); });
   S.nextId = data.nextId || (Math.max(0, ...S.nodes.map(n => n.id), ...S.segs.map(s => s.id),
-    ...S.ducts.map(d => d.id)) + 1);
+    ...S.ducts.map(d => d.id), ...(S.measures || []).map(m => m.id)) + 1);
   if (data.settings) Object.assign(S.settings, data.settings);
   traceHeight = S.settings.pipeHeight;
   ductHeight = S.settings.ductHeight || 3.4;
@@ -7243,6 +7462,11 @@ function stepsDialog() {
     + step(S.nodes.some(n => n.type === 'controller'), 'Controllers', '<b>Control</b> places one '
         + 'wherever it goes — one for the lot, or several in different rooms. Tick the units each one '
         + 'drives; selecting it draws a dashed leader to every one of them.')
+    + step((S.measures || []).length > 0, 'Tape measure',
+        '<b>Tape</b> (M) measures on the plan without putting a pipe or a duct down. Click along '
+        + 'the route, change direction at a corner, and double-click or press <b>Finish</b> to keep '
+        + 'it. Select it to delete it or drop a corner. The figure is the plan length — it is not a '
+        + 'pipe run and it does not include rise.')
     + step(false, 'Put the line sizes in', 'Schedule → <b>Line sizes</b>. Tick the sections a selection '
         + 'covers — or a whole system at once — pick the liquid, gas and HP gas sizes and apply them to '
         + 'the lot. Sizes are the imperial steps refrigerant pipe is actually bought in, 1/4" to 1 5/8". '
@@ -7257,7 +7481,7 @@ function stepsDialog() {
     + 'should be read as if it did.</div>'
     + '<h4>Keys</h4>'
     + '<table class="mini"><tbody>'
-    + '<tr><td class="mono">V H S C I B T J</td><td>select, pan, scale, condenser, indoor, BC box, trace, T-piece</td></tr>'
+    + '<tr><td class="mono">V H S M C I B T J</td><td>select, pan, scale, tape, condenser, indoor, BC box, trace, T-piece</td></tr>'
     + '<tr><td class="mono">D O K R</td><td>duct, outlet, controller, HRV</td></tr>'
     + '<tr><td class="mono">Alt</td><td>held: flip the corner lock, or cut a joint exactly where the cursor is</td></tr>'
     + '<tr><td class="mono">Shift</td><td>held while dragging a handle: keep a unit’s shape, or snap its angle to 15°</td></tr>'
@@ -7296,7 +7520,7 @@ sc.addEventListener('pointerdown', ev => {
      into a `dblclick`, and a pointerdown carries `detail: 0` rather than a
      click count. Both of the obvious ways to catch it therefore do nothing,
      which is exactly how it behaved. Timing and distance are reliable. */
-  if (draft && (draft.kind === 'trace' || draft.kind === 'duct')) {
+  if (draft && (draft.kind === 'trace' || draft.kind === 'duct' || draft.kind === 'tape')) {
     const now = Date.now();
     if (lastClick && now - lastClick.t < 450 && dist(lastClick, p) * zoom < 7) {
       lastClick = null;
@@ -7325,9 +7549,13 @@ sc.addEventListener('pointerdown', ev => {
       return;
     }
     const h = hitSeg(p);
-    if (h) { select('seg', h.seg.id); return; }
     const hd = hitSeg(p, 14, 'duct');
-    if (hd) { select('duct', hd.seg.id); return; }
+    const tm = hitMeasure(p, 12);
+    const cand = [];
+    if (h) cand.push({ d: h.r.d, go: () => select('seg', h.seg.id) });
+    if (hd) cand.push({ d: hd.r.d, go: () => select('duct', hd.seg.id) });
+    if (tm) cand.push({ d: tm.r.d, go: () => select('tape', tm.measure.id) });
+    if (cand.length) { cand.sort((a, b) => a.d - b.d); cand[0].go(); return; }
     sel = null; closeInspector();
     return;
   }
@@ -7354,6 +7582,19 @@ sc.addEventListener('pointerdown', ev => {
     if (!draft) draft = { kind: 'calib', pts: [] };
     draft.pts.push(p);
     if (draft.pts.length === 2) { const [a, b] = draft.pts; draft = null; askScale(a, b); }
+    render();
+    return;
+  }
+
+  if (tool === 'tape') {
+    const q = previewMeasurePoint(p);
+    if (!draft) {
+      draft = { kind: 'tape', pts: [{ x: q.x, y: q.y }] };
+      render();
+      return;
+    }
+    const last = draft.pts[draft.pts.length - 1];
+    if (dist(last, q) > 0.4) draft.pts.push({ x: q.x, y: q.y });
     render();
     return;
   }
@@ -7494,7 +7735,7 @@ sc.addEventListener('pointermove', ev => {
     }
     return;
   }
-  if (draft || tool === 'trace' || tool === 'duct' || tool === 'joint'
+  if (draft || tool === 'trace' || tool === 'duct' || tool === 'joint' || tool === 'tape'
       || PLACE_TOOLS.indexOf(tool) >= 0) {
     setOverride(ev.altKey);
     hoverPt = toDwg(ev); render();
@@ -7511,6 +7752,7 @@ sc.addEventListener('pointermove', ev => {
    so it can be picked up and carried on later. Reached by Enter, by
    double-clicking, or by the × on the hint bar. */
 function finishDraftInPlace() {
+  if (draft && draft.kind === 'tape') return finishMeasure();
   if (!draft || (draft.kind !== 'trace' && draft.kind !== 'duct')) return false;
   const duct = draft.kind === 'duct';
   if (draft.pts.length < 2) { draft = null; render(); return true; }
@@ -7725,7 +7967,7 @@ document.addEventListener('keydown', ev => {
       : 'Corners free &mdash; every corner takes whatever angle you click');
     render(); return;
   }
-  if (k === '[' || k === ']') {
+  if ((k === '[' || k === ']') && tool !== 'tape' && !(draft && draft.kind === 'tape')) {
     setActiveHeight(Math.round((activeHeight() + (k === ']' ? 0.1 : -0.1)) * 100) / 100);
     el('hgtIn').value = fmt(activeHeight(), 2);
     toast((drawingDuct() ? 'Next duct' : 'Next section') + ' at ' + fmt(activeHeight(), 2) + ' m');

@@ -194,18 +194,30 @@ Do not borrow a refrigerant colour for a duct, or the other way round.
 
 Nothing can be placed or traced before the scale is set: a drawing without
 one opens a modal that cannot be dismissed, and every tool in `NEEDS_SCALE`
-stays disabled. Swapping the sheet behind an existing take-off asks whether
-the scale still holds rather than gating, so a revision at the same scale
-does not throw the take-off away.
+stays disabled (including Tape). Swapping the sheet behind an existing
+take-off asks whether the scale still holds rather than gating, so a
+revision at the same scale does not throw the take-off away.
+
+### Tape measure is not a pipe
+
+**Tape** (`tool: 'tape'`, key `M`) is a plan annotation: click along a
+route, change direction at a corner, finish to keep it. Stored in
+`S.measures`, not in `S.segs` or `S.ducts`. The figure is the polyline on
+the drawing — plan metres only. It does not include rise, it does not go
+on the pipe or duct schedule, and it must never look as though it does.
+Snapping pulls to a unit, a joint or a run **without cutting a joint**.
+Select and Delete (or the inspector) removes one. Undo, save, rotate and
+the layout plate all carry them. They are not drawn in 3D.
 
 ### Rotating turns the trace with the sheet
 
-`rotateDrawing()` re-renders the bitmap and puts **every node, every polyline
-point and both calibration points** through the same rotation about the same
-centre. The scale is untouched, because turning a drawing does not change how
-many pixels there are in a metre. Rotate anything without rotating all of it
-and units end up in the wrong rooms with lengths that still look plausible.
-Repeated fine angles re-encode the bitmap and soften it; the dialog says so.
+`rotateDrawing()` re-renders the bitmap and puts **every node, every
+polyline point (pipe, duct and tape) and both calibration points** through
+the same rotation about the same centre. The scale is untouched, because
+turning a drawing does not change how many pixels there are in a metre.
+Rotate anything without rotating all of it and units end up in the wrong
+rooms with lengths that still look plausible. Repeated fine angles
+re-encode the bitmap and soften it; the dialog says so.
 
 ---
 
@@ -423,10 +435,13 @@ Two things about the pictures:
 Five minutes, and it exercises everything:
 
 1. Open `index.html`. Load any PDF or image. Confirm the **scale gate**
-   appears and that the condenser, indoor, BC, trace and joint tools are all
-   disabled behind it.
-2. Set a scale. **Rotate 90°** and confirm the drawing turns, the scale strip
-   is unchanged, and *Route one way* in the status strip is unchanged.
+   appears and that the condenser, indoor, BC, trace, joint and tape tools
+   are all disabled behind it.
+2. Set a scale. Arm **Tape** (M). Click three corners of a room and
+   finish. Confirm the label is the plan length, that it is not a pipe
+   section, and that Select then Delete removes it. **Rotate 90°** and
+   confirm the drawing turns, the tape turns with it, the scale strip is
+   unchanged, and *Route one way* in the status strip is unchanged.
 3. Place a condenser set to **VRF 3-pipe**, two indoor units of different
    types, and a single BC box in front of each. Trace them up. Confirm the
    sections from the condenser show **3** in the pipe badge and the sections
@@ -478,8 +493,8 @@ Five minutes, and it exercises everything:
     same sizes as the drawer for whichever section is selected.
 12. **Save**, reload the page, **Open** the file. Every section name, length,
     point height, footprint, angle, connection point, line size, duct size,
-    air volume, HRV stream, heater, grille and controller must come back
-    identical.
+    air volume, HRV stream, heater, grille, controller and tape measure
+    must come back identical.
 13. **PDF report** — the layout plan and both 3D pictures must be there, in
     colour, with the section labels legible. An HRV job must show the
     ventilation heading and the room in/out line. **Excel** — open it and
