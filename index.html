@@ -1915,16 +1915,15 @@ function syncSegEnds() {
     if (a) { sg.pts[0].x = a.x; sg.pts[0].y = a.y; }
     if (b) { sg.pts[sg.pts.length - 1].x = b.x; sg.pts[sg.pts.length - 1].y = b.y; }
   });
-  /* Refrigerant only: the last hop onto a unit stays square. Connecting
-     to a casing corner used to pull that last point off the 90, which is
-     what made a set of pipes look as if they flared in and out. */
-  if (S.settings.ortho !== false) {
-    S.segs.forEach(sg => {
-      if (!sg.pts || sg.pts.length < 2) return;
-      squareIntoUnit(sg.pts, 0, nodeById(sg.a));
-      squareIntoUnit(sg.pts, sg.pts.length - 1, nodeById(sg.b));
-    });
-  }
+  /* Refrigerant only: the last hop onto a unit stays square — even when
+     corners are free, because a diagonal into the casing is what makes
+     the pair look as if it faired out. Connecting to a casing corner
+     used to pull that last point off the 90. */
+  S.segs.forEach(sg => {
+    if (!sg.pts || sg.pts.length < 2) return;
+    squareIntoUnit(sg.pts, 0, nodeById(sg.a));
+    squareIntoUnit(sg.pts, sg.pts.length - 1, nodeById(sg.b));
+  });
 }
 
 function isUnitCasing(n) {
@@ -2166,17 +2165,32 @@ function lineHit(a1, a2, b1, b2) {
 function offsetPoly(pts, off) {
   if (Math.abs(off) < 1e-9 || !pts || pts.length < 2)
     return (pts || []).map(p => ({ x: p.x, y: p.y }));
-  const nrm = [];
+  const nrm = [], lens = [];
   for (let i = 0; i < pts.length - 1; i++) {
     const ux = pts[i + 1].x - pts[i].x, uy = pts[i + 1].y - pts[i].y;
     const L = Math.hypot(ux, uy) || 1;
+    lens.push(L);
     nrm.push({ x: -uy / L * off, y: ux / L * off });
   }
+  /* A stub shorter than the pair width cannot carry a mitre — the offset
+     lines self-intersect and the set looks as if it flared into the unit.
+     Keep the longer leg's normal so the pipes stay parallel. */
+  const minLeg = Math.abs(off) * 2.4;
   const out = [];
   for (let i = 0; i < pts.length; i++) {
-    if (i === 0) { out.push({ x: pts[0].x + nrm[0].x, y: pts[0].y + nrm[0].y }); continue; }
+    if (i === 0) {
+      const n = (lens[0] < minLeg && nrm[1]) ? nrm[1] : nrm[0];
+      out.push({ x: pts[0].x + n.x, y: pts[0].y + n.y });
+      continue;
+    }
     if (i === pts.length - 1) {
-      const n = nrm[nrm.length - 1];
+      const last = nrm.length - 1;
+      const n = (lens[last] < minLeg && last > 0) ? nrm[last - 1] : nrm[last];
+      out.push({ x: pts[i].x + n.x, y: pts[i].y + n.y });
+      continue;
+    }
+    if (lens[i - 1] < minLeg || lens[i] < minLeg) {
+      const n = lens[i] >= lens[i - 1] ? nrm[i] : nrm[i - 1];
       out.push({ x: pts[i].x + n.x, y: pts[i].y + n.y });
       continue;
     }
@@ -2283,6 +2297,10 @@ function render() {
 
   // ---- pipe sections ----
   S.segs.forEach(sg => drawSeg(g, sg, k));
+  /* Each section is offset on its own, so a T or a 90° made of two
+     sections would otherwise end as unconnected butts. The elbows are
+     drawn here so the pipes look as joined as they are. */
+  drawPipeJoins(g, k);
 
   // ---- where a joint would be cut ----
   if (tool === 'joint' && hoverPt) drawJointSnap(g, k);
@@ -2470,6 +2488,54 @@ function drawSeg(g, sg, k) {
       'font-size': 8 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 700,
       fill: '#fff' }, String(sg.pipes || 2)));
   }
+}
+
+/* Offset pipes of two sections meet at a joint only if we draw the elbow
+   (or the through) ourselves. Walk the arms in angle order and offset the
+   same 3-point polyline the sections would have been, so a T or a 90°
+   reads as connected. Two arms get one elbow — the short way — not the
+   long way around. */
+function drawPipeJoins(g, k) {
+  const off = pipeOffsetDraw(k);
+  const base = 2.1;
+  const reach = Math.max(off * 4, 10 * k);
+  S.nodes.forEach(n => {
+    if (n.type !== 'branch') return;
+    const segs = neighbours(n.id);
+    if (segs.length < 2) return;
+    const arms = [];
+    segs.forEach(sg => {
+      const pts = sg.pts;
+      if (!pts || pts.length < 2) return;
+      const away = sg.a === n.id ? pts[1] : pts[pts.length - 2];
+      if (!away) return;
+      arms.push({ away, pipes: sg.pipes || 2, ang: Math.atan2(away.y - n.y, away.x - n.x) });
+    });
+    if (arms.length < 2) return;
+    arms.sort((a, b) => a.ang - b.ang);
+    const along = away => {
+      const ux = away.x - n.x, uy = away.y - n.y;
+      const L = Math.hypot(ux, uy) || 1;
+      const t = Math.min(reach, L * 0.48);
+      return { x: n.x + ux / L * t, y: n.y + uy / L * t };
+    };
+    const pairs = arms.length === 2 ? 1 : arms.length;
+    for (let i = 0; i < pairs; i++) {
+      const a = arms[i], b = arms[(i + 1) % arms.length];
+      const keys = linesFor(Math.min(a.pipes, b.pipes));
+      const span = keys.length - 1;
+      const poly = [along(a.away), { x: n.x, y: n.y }, along(b.away)];
+      keys.forEach((key, ki) => {
+        const L = LINES[key];
+        const o = (ki - span / 2) * off * 1.9;
+        g.appendChild(mk('path', {
+          d: pathOf(offsetPoly(poly, o)), fill: 'none', stroke: L.colour,
+          'stroke-width': base * L.w * k, 'stroke-linecap': 'butt',
+          'stroke-linejoin': 'miter', 'stroke-miterlimit': 2.5,
+        }));
+      });
+    }
+  });
 }
 
 /* ---------- one duct section ----------
@@ -2895,7 +2961,7 @@ function drawSnap(g, k, net) {
 }
 
 function drawJointSnap(g, k) {
-  const t = hitJointAt(hoverPt, 26);
+  const t = hitJointAt(hoverPt, JOINT_HIT_PX);
   if (!t) return;
   const h = t.hit;
   g.appendChild(mk('circle', { cx: h.r.q.x, cy: h.r.q.y, r: 7 * k, fill: 'var(--white)',
@@ -3426,12 +3492,19 @@ function promoteVertex(sg, i, net) {
    SNAPPING
    A run can only be joined to something that is already a point: a unit, a
    joint, or a corner that has been traced. The cursor is pulled to the
-   nearest one and what the click will do is drawn before the click happens,
-   so a branch cannot end up a few centimetres off the joint it was meant to
-   leave, and an indoor unit cannot be left hanging beside the pipe that was
-   supposed to feed it.
+   nearest one when it is nearby, and what the click will do is drawn
+   before the click happens, so a branch cannot end up a few centimetres
+   off the joint it was meant to leave. A click on a run whose nearest
+   existing point is across the room is just the next corner — hold Alt
+   to cut a joint there.
    ========================================================================== */
-const SNAP_PX = 22;
+/* Screen-constant. 22 was yanking the cursor to a unit from half a
+   room away; 14 is still enough to catch a joint you meant. A click
+   on a run only pulls to an existing point when that point is inside
+   SNAP_PULL_PX — further away it is just the next corner. */
+const SNAP_PX = 14;
+const SNAP_PULL_PX = 36;
+const JOINT_HIT_PX = 18;
 
 function nodeWord(n) {
   return n.type === 'condenser' ? 'condenser'
@@ -3494,7 +3567,7 @@ function snapAt(p, skipId, net) {
   });
   if (best) return best;
 
-  const h = hitSeg(p, 13, net);
+  const h = hitSeg(p, 10, net);
   if (!h) return null;
   if (S.settings.snapPoints === false || overrideKey) {
     return { kind: 'run', seg: h.seg, r: h.r, net, at: { x: h.r.q.x, y: h.r.q.y },
@@ -3506,8 +3579,11 @@ function snapAt(p, skipId, net) {
   if (na && na.id !== skipId) consider(snapNodeAt(na, p));
   if (nb && nb.id !== skipId) consider(snapNodeAt(nb, p));
   for (let i = 1; i < h.seg.pts.length - 1; i++) consider(snapVertex(h.seg, i));
-  if (bp) bp.pulled = true;
-  return bp;
+  if (bp && bp.d <= SNAP_PULL_PX / zoom) {
+    bp.pulled = true;
+    return bp;
+  }
+  return null;
 }
 
 /* Act on a snap: give back the node to connect to, making one if the snap was
@@ -5436,20 +5512,29 @@ function hop3D(poly, extra) {
 
 function offsetPoly3D(poly, off) {
   if (Math.abs(off) < 1e-9 || !poly || poly.length < 2) return poly;
-  const nrm = [];
+  const nrm = [], lens = [];
   for (let i = 0; i < poly.length - 1; i++) {
     const ux = poly[i + 1].X - poly[i].X, uy = poly[i + 1].Y - poly[i].Y;
     const L = Math.hypot(ux, uy) || 1;
+    lens.push(L);
     nrm.push({ x: -uy / L * off, y: ux / L * off });
   }
+  const minLeg = Math.abs(off) * 2.4;
   const out = [];
   for (let i = 0; i < poly.length; i++) {
     if (i === 0) {
-      out.push({ X: poly[0].X + nrm[0].x, Y: poly[0].Y + nrm[0].y, Z: poly[0].Z });
+      const n = (lens[0] < minLeg && nrm[1]) ? nrm[1] : nrm[0];
+      out.push({ X: poly[0].X + n.x, Y: poly[0].Y + n.y, Z: poly[0].Z });
       continue;
     }
     if (i === poly.length - 1) {
-      const n = nrm[nrm.length - 1];
+      const last = nrm.length - 1;
+      const n = (lens[last] < minLeg && last > 0) ? nrm[last - 1] : nrm[last];
+      out.push({ X: poly[i].X + n.x, Y: poly[i].Y + n.y, Z: poly[i].Z });
+      continue;
+    }
+    if (lens[i - 1] < minLeg || lens[i] < minLeg) {
+      const n = lens[i] >= lens[i - 1] ? nrm[i] : nrm[i - 1];
       out.push({ X: poly[i].X + n.x, Y: poly[i].Y + n.y, Z: poly[i].Z });
       continue;
     }
@@ -7414,7 +7499,7 @@ function projectDialog() {
         + 'anything set out at an angle. Either way, holding <b>Alt</b> flips it for one corner, and the status '
         + 'strip says which way it is set.')
     + chk('pSnap', s.snapPoints !== false, 'Branch only at units, joints and corners',
-        'A click along a run is pulled to the nearest point on it. Hold Alt to cut a joint exactly where the cursor is.')
+        'A click near a unit, joint or corner is pulled to it — not from across the room. Hold Alt to cut a joint exactly where the cursor is.')
     + chk('pAuto', s.autoName !== false, 'Name sections automatically',
         NAMING_NOTE)
 
@@ -7634,7 +7719,7 @@ sc.addEventListener('pointerdown', ev => {
   }
 
   if (tool === 'joint') {
-    const t = hitJointAt(p, 26);
+    const t = hitJointAt(p, JOINT_HIT_PX);
     if (!t) { toast('Click along a pipe run or a duct to cut a T-piece into it'); return; }
     const h = t.hit, net = t.net;
     pushUndo(net === 'duct' ? 'cut a T-piece' : 'cut a joint');
