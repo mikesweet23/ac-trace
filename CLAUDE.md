@@ -242,10 +242,13 @@ re-encode the bitmap and soften it; the dialog says so.
   `D` / `E`. Off an HRV it is `OA` / `EA` / `SA` / `RA` — never reuse `D`.
 - **A run can only be joined to a point that already exists** — a unit, a
   joint, or a corner that has been traced. The cursor is pulled to the nearest
-  one and the connection is ringed and named *before* the click. Hold Alt, or
-  turn the rule off in Job & defaults, to cut a joint exactly where the cursor
-  is. **Joint / T-piece (J)** cuts into whichever network is nearest
-  (`hitJointAt()`) — pipe or duct — so a nearby pipe does not steal a duct
+  one **only when it is nearby** (`SNAP_PX` 14, pull cap `SNAP_PULL_PX` 36)
+  and the connection is ringed and named *before* the click. A click on a
+  run whose nearest existing point is further away is just the next corner,
+  not a yank to the far end. Hold Alt, or turn the rule off in Job &
+  defaults, to cut a joint exactly where the cursor is. **Joint / T-piece
+  (J)** cuts into whichever network is nearest (`hitJointAt()`,
+  `JOINT_HIT_PX`) — pipe or duct — so a nearby pipe does not steal a duct
   click. The duct palette has the same T-piece. A joint cut into the middle
   of a run takes **the height the pipe is actually at there**
   (`heightAlong()`), not the project default. Air on a duct T-piece
@@ -295,16 +298,24 @@ re-encode the bitmap and soften it; the dialog says so.
   `connPoint()` resolves it and `syncSegEnds()` — first thing in `solve()` —
   puts every section's ends back where its units say they are, so moving,
   resizing or turning a unit carries its pipework with it and nothing else has
-  to remember to. With square corners on, `squareIntoUnit()` then keeps the
-  last hop onto a casing (indoor, condenser, BC — not a joint or an outlet)
-  horizontal or vertical, sliding or inserting a stub so the rest of the run
-  is not pulled off-square. That is refrigerant only; ductwork is left as
-  traced.
+  to remember to. `squareIntoUnit()` then keeps the last hop onto a casing
+  (indoor, condenser, BC — not a joint or an outlet) horizontal or vertical,
+  sliding or inserting a stub so the rest of the run is not pulled
+  off-square. That runs whether corners are square or free: a diagonal into
+  the casing is what made the pair look as if it faired out. Refrigerant
+  only; ductwork is left as traced.
 - **The pipes of one section are a true parallel offset.** `offsetPoly()`
   (and `offsetPoly3D()`) shifts each leg by a constant and mitres at
   `lineHit()`. Averaging the incoming and outgoing headings was what made a
-  set flare at a corner and pinch back in on the next straight. Strokes use
+  set flare at a corner and pinch back in on the next straight. A stub
+  shorter than the pair width cannot carry a mitre — keep the longer leg's
+  normal so the pipes stay parallel into the unit. Strokes use
   `stroke-linejoin: miter`. Do not go back to a heading average.
+- **A T or a 90° made of two sections has to look joined.** Each section is
+  offset on its own, so the butts at a joint do not meet. `drawPipeJoins()`
+  walks the arms in angle order and draws the same offset elbow (or through)
+  so the pipes look as connected as they are. Two arms get the short way
+  only, not the long way around.
 - **The connection is measured against the TRUE footprint**, `unitBoxTrue()`,
   never the legibility minimum `unitBox()` applies when zoomed out. Measure it
   against the drawn box and a connection slides as you zoom, and every length
@@ -465,10 +476,13 @@ Five minutes, and it exercises everything:
 5. **Zoom right in and trace on to the corner of a unit**, not its middle.
    Confirm a ring is drawn where the pipe lands, that the last hop onto the
    casing stays horizontal or vertical (`squareIntoUnit()`), that the two or
-   three pipes stay a true parallel offset through every corner
-   (`offsetPoly()` mitres; they must not flare and pinch), that the length
-   is measured to that corner rather than the centre, and that moving and
-   turning the unit afterwards carries the connection round with it.
+   three pipes stay a true parallel offset through every corner and into
+   the unit (they must not flare or fair out), that a T or a 90° off a
+   joint looks joined (`drawPipeJoins()`), that the length is measured to
+   that corner rather than the centre, and that moving and turning the unit
+   afterwards carries the connection round with it. Confirm snap only
+   pulls when you are near a unit, joint or corner — not from across the
+   room.
 6. Trace a run that **changes height mid-way** — press `]` between two clicks.
    Confirm a riser marker with the height change appears on the plan, that the
    run inspector lists a height per point, and that *Rise* on the schedule is
