@@ -245,14 +245,18 @@ re-encode the bitmap and soften it; the dialog says so.
   one **only when it is nearby** (`SNAP_PX` 14, pull cap `SNAP_PULL_PX` 36)
   and the connection is ringed and named *before* the click. A click on a
   run whose nearest existing point is further away is just the next corner,
-  not a yank to the far end. Hold Alt, or turn the rule off in Job &
-  defaults, to cut a joint exactly where the cursor is. **Joint / T-piece
-  (J)** cuts into whichever network is nearest (`hitJointAt()`,
-  `JOINT_HIT_PX`) — pipe or duct — so a nearby pipe does not steal a duct
-  click. The duct palette has the same T-piece. A joint cut into the middle
-  of a run takes **the height the pipe is actually at there**
-  (`heightAlong()`), not the project default. Air on a duct T-piece
-  readjusts on the next `solveDucts()`.
+  not a yank to the far end. While a duct is being traced, a click on a
+  run already drawn cuts a T rather than adding a free corner that looks
+  joined but is not. Hold Alt, or turn the rule off in Job & defaults, to
+  cut a joint exactly where the cursor is. **Joint / T-piece (J)** cuts
+  into whichever network is nearest (`hitJointAt()`, `JOINT_HIT_PX`) —
+  pipe or duct — so a nearby pipe does not steal a duct click. The duct
+  palette has the same T-piece. A joint cut into the middle of a run takes
+  **the height the pipe is actually at there** (`heightAlong()`), not the
+  project default. Air on a duct T-piece readjusts on the next
+  `solveDucts()`. The live preview and the click must skip the node the
+  run started on — without that, a finish near the plant snaps back to
+  the start and the tool looks dead.
 - **Alt is the override key, and it means one thing: ignore the constraint in
   the way.** Over open paper it flips the corner lock, so a square job takes
   one free angle and a free-form job one square corner without changing a

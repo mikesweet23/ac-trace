@@ -1399,7 +1399,10 @@ function autoNameSections(quiet) {
   let m = 0, b = 0;
   const runSegs = {};                     // the sections each named run is made of
 
+  const seenWalk = {};
   const walk = (nodeId, runName, level) => {
+    if (seenWalk[nodeId]) return;
+    seenWalk[nodeId] = true;
     const outs = S.segs.filter(s => s.up === nodeId && !s.orphan);
     // the leg carrying the most duty carries on as the same run; the rest branch
     outs.sort((x, y) => (y.kw || 0) - (x.kw || 0) || (y.nIndoor || 0) - (x.nIndoor || 0));
@@ -1671,14 +1674,18 @@ function solveDucts() {
       .forEach(o => { kinds[ductKindOf(o)] = true; });
     Object.keys(kinds).forEach(k => shareStream(root, mine, k, total));
 
+    const carriedMemo = {};
     const carried = nodeId => {
+      if (carriedMemo[nodeId] !== undefined) return carriedMemo[nodeId];
+      carriedMemo[nodeId] = 0;
       let q = 0;
       const o = nodeById(nodeId);
       if (o && o.type === 'outlet') q += o.flow || 0;
       mine.filter(d => d.up === nodeId).forEach(d => {
-        d.flow = d.takeOff + carried(d.down);
+        d.flow = (d.takeOff || 0) + carried(d.down);
         q += d.flow;
       });
+      carriedMemo[nodeId] = q;
       return q;
     };
     carried(root.id);
@@ -3064,7 +3071,7 @@ const HINTS = {
   joint: 'Click along a pipe or a duct to cut a T-piece into it, then trace a branch off it. '
        + 'Air at a tee splits between the legs. While tracing, <kbd>Alt</kbd> cuts one in one go.',
   duct: 'Start on a ducted unit or an HRV, or anywhere on the sheet. Finish on an outlet, '
-      + 'a heater or a T-piece, or <b>double-click</b> to stop. Pick the air first.',
+      + 'a heater, or a duct already traced — that cuts a T. <b>Double-click</b> to stop.',
   outlet: 'Click where a grille sits, or on the open end of a duct to turn it into one. '
       + 'Pick the air and the grille first. Leave volume at 0 to share the stream; type a rate if it differs.',
   ctl: 'Click where the controller sits. Tick the indoor units and HRVs it drives afterwards.',
@@ -3394,6 +3401,9 @@ function autoNameDucts(quiet) {
     (runs[name] = runs[name] || []).push(d);
   };
   const walkKind = (nodeId, runName, level, kind, nextMain, nextBr) => {
+    const seenKey = nodeId + ':' + kind;
+    if (walkKind.seen[seenKey]) return;
+    walkKind.seen[seenKey] = true;
     const outs = S.ducts.filter(d => d.up === nodeId && !d.orphan && ductKindOf(d) === kind);
     outs.sort((x, y) => (y.flow || 0) - (x.flow || 0));
     let sub = 0;
@@ -3408,6 +3418,7 @@ function autoNameDucts(quiet) {
       if (dn && dn.type !== 'outlet') walkKind(dn.id, name, lvl, kind, nextMain, nextBr);
     });
   };
+  walkKind.seen = {};
 
   const streamN = { oa: 0, ea: 0, sa: 0, ra: 0 };
   S.nodes.filter(n => n.type === 'hrv').forEach(u => {
@@ -3582,6 +3593,13 @@ function snapAt(p, skipId, net) {
   if (bp && bp.d <= SNAP_PULL_PX / zoom) {
     bp.pulled = true;
     return bp;
+  }
+  /* A click on a duct already traced is a T, not a yank to the far end
+     and not a free corner that looks joined but is not. Pipework still
+     waits for Alt or the T-piece tool — that is the existing rule. */
+  if (net === 'duct') {
+    return { kind: 'run', seg: h.seg, r: h.r, net, at: { x: h.r.q.x, y: h.r.q.y },
+             d: h.r.d, what: 'new T-piece here', name: segName(h.seg) };
   }
   return null;
 }
@@ -7787,18 +7805,17 @@ sc.addEventListener('pointerdown', ev => {
       render();
       return;
     }
-    const sn = snapAt(p, null, 'duct');
-    if (sn) {
-      if (sn.kind === 'node' && sn.node.id === draft.startNode) {
-        toast('That is where this duct started'); return;
-      }
+    /* Skip the start — the live preview already does. Without that, a click
+       near the plant (the usual place to finish an outlet) snaps back to
+       the start and the tool looks as if it has died. */
+    const sn = snapAt(p, draft.startNode, 'duct');
+    if (sn && !(sn.kind === 'node' && sn.node.id === draft.startNode)) {
       if (sn.kind === 'node' && sn.node.type === 'indoor' && sn.node.unit !== 'ducted') {
         toast(esc(sn.node.name) + ' is not a ducted unit — change its type to Ducted to run air off it');
         return;
       }
       const c = connectAt(sn);
-      if (c) {
-        if (c.node.id === draft.startNode) { toast('That is where this duct started'); return; }
+      if (c && c.node.id !== draft.startNode) {
         draft.pts.push({ x: c.at.x, y: c.at.y, h: ductTraceHeight() });
         finishDuct(c.node.id, c.off);
         return;
@@ -7821,14 +7838,10 @@ sc.addEventListener('pointerdown', ev => {
       render();
       return;
     }
-    const sn = snapAt(p);
-    if (sn) {
-      if (sn.kind === 'node' && sn.node.id === draft.startNode) {
-        toast('That is where this run started'); return;
-      }
+    const sn = snapAt(p, draft.startNode);
+    if (sn && !(sn.kind === 'node' && sn.node.id === draft.startNode)) {
       const c = connectAt(sn);
-      if (c) {
-        if (c.node.id === draft.startNode) { toast('That is where this run started'); return; }
+      if (c && c.node.id !== draft.startNode) {
         draft.pts.push({ x: c.at.x, y: c.at.y, h: traceHeight });
         finishTrace(c.node.id, c.off);
         return;
