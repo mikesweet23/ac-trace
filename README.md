@@ -17,7 +17,21 @@ dimension, then place the plant and trace the routes between it.
   3-pipe with a single BC box before each indoor unit.
 - **Indoor units**: wall mounted, 900 mm ceiling cassette, 600 mm ceiling
   cassette, ducted, and 1-way blow underslung — each drawn at its real
-  footprint once the drawing is zoomed in far enough to read it.
+  footprint at every zoom, in the 3D view and on both report plates.
+- **Lasso, move and copy.** Drag a box over a fan coil with its ducts and
+  grilles, or Shift-click things one at a time; drag any of them to move the
+  lot (Shift steps by the ceiling grid, arrows nudge, *Move by* is exact);
+  Duplicate (Ctrl+D) sets a copy down beside it. Ctrl+C / Ctrl+V carry a
+  set-out in metres to another sheet at another scale — the next floor.
+- **Lengths you can set.** Select a duct, or a pipe section ending in
+  mid-air, and its far end has a handle: drag it along the run, or type the
+  plan length, while the fed end stays put — so every run off a row of fan
+  coils comes out the same length.
+- **Fittings counted.** Every section reports its bends, risers and elbows;
+  every air system its T-pieces — for whoever sizes the pipe or the duct.
+- **Help everywhere.** Every instruction is on the start page, in the
+  searchable Help pane (`?` or F1) beside the drawing, and in *How to use*
+  with the job's progress ticked off.
 - **Heights everywhere.** Every unit and every point along every run carries
   its own height, so the risers and drops are measured with the plan run
   rather than guessed afterwards.

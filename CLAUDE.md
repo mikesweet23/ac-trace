@@ -205,6 +205,106 @@ the graphic — those pixels belonged to the last sheet — and asks whether
 the scale figure still holds. Set scale again if it does not. Do not
 clear `pxPerM` just because the mark is hidden.
 
+### Nothing goes on the sheet until a run is finished
+
+Starting a trace or a duct used to act at the first click: a start on a run
+already drawn cut that run in two at once, and a duct started on open paper
+dropped a `djoint` there. Abandon the trace — Escape, a tool change, a
+double-click on the spot — and the cut or the joint stayed behind. That was
+"I draw a duct, click off it, and it adds another section".
+
+The start is now remembered on the draft as a snap (`draft.startNode` for a
+unit or joint already there, `draft.startSnap` for a corner or a point on a
+run, nothing for open paper) and `realiseStart()` makes it real only inside
+the finishing step (`finishDraftAt()`, `finishDraftInPlace()`), after the
+too-short check, all under one `asOneUndo()`. The end snap is looked up
+**again after the start is realised**, because cutting the start into a run
+moves that run's points. `draftEndSnap()` is the one place that decides what
+a click would finish on; it skips the start node and the start point, or a
+finish near the plant snaps back to where the run began.
+
+### True size is the default
+
+`S.settings.trueSize` (default on) draws every unit at its real footprint at
+every zoom, every sized duct as a band of its real width on the plan and a
+box of its real width and depth in 3D, and both report plates the same way.
+The legibility minimum in `unitBox()` (46 / 38 px), the 3D `grow`, and the
+duct band cap only apply when it is turned off in Job & defaults. The only
+floor left in true mode is a 7 px dot so a controller can still be found.
+`handlesUsable()` hides the resize handles on a box smaller than 22 px on
+screen, because they would otherwise sit on top of each other and take the
+click meant to move it — zoom in to resize a small unit.
+
+### A selection can be many things
+
+`sel` is either `{ kind, id }` as before or `{ kind: 'multi', nodes, segs,
+ducts, measures }`. **`isSel(kind, id)` is the only test for "picked"** —
+every draw routine asks it, so one thing and many things look the same on
+the sheet. A lasso dragged out on open paper with Select (`marquee`) selects
+what it encloses — a unit by its centre, a run when every point is inside or
+both its end units are; Shift-click toggles one; Ctrl+A takes the lot.
+Dragging anything selected moves the whole selection (`moveSelection()`);
+runs whose other end was not selected are stretched by `syncSegEnds()`.
+With Shift held the move steps by the ceiling grid (`S.settings.gridM`,
+0.60 m) — applied by `snapDelta()` to the whole distance since the grab,
+never per event, so it cannot drift. Arrow keys nudge 50 mm (Shift 0.5 m)
+and a run of presses within 1.5 s is one undo step (`nudgeSelection()`);
+*Move by* in the inspector moves an exact distance.
+`duplicateSelection()` copies the lot one extent to the right, remaps run
+ends to the copies, puts a joint at any end that was not copied, mints new
+names and drops every derived field; it is also what the single-unit
+Duplicate button and Ctrl+D call. `deleteMulti()` removes it all in one undo
+step. A plain click on open paper still clears the selection, but only when
+the pointer comes up without having moved.
+
+### A duct's length can be set, and its fed end never moves
+
+`runFreeEnd(d)` says whether a duct can be resized: its fed end (`d.up`, or
+`a`) is fixed, and the other end is free only when the one thing on it is
+this duct's own outlet, joint or heater. Then a square handle is drawn at
+that end (`drawRunEndHandle()`, after the units so it shows over an outlet
+box), dragging it slides the end **along the last leg only** (Shift steps
+50 mm), and the *Plan length* field in the inspector (`setRunPlanLength()`)
+moves it to an exact figure. `setRunEnd()` carries the outlet or joint with
+the end, so `syncSegEnds()` agrees with it. An end on a unit or a shared
+joint is not free — move the unit or the joint. A pipe section gets the
+same handle and field when its far end is a `branch` in mid-air
+(`isDuctRun()` decides which end types count as free).
+
+### The help is one list, drawn three ways
+
+`HELP` (sections of tips, each with a title, a body, the `tool`s it is
+about and an optional `done()` test) and `HELP_KEYS` are the whole of the
+documentation inside the tool. `buildBoardHelp()` lays every tip out on
+the start page under the drop zone, so the file can be read before a sheet
+is loaded; `renderHelp()` fills the **Help pane** (`? Help`, `?`, `F1`),
+searchable, open beside the drawing at any time, with the armed tool's
+tips marked `.now`; `stepsDialog()` (*How to use*) is the same tips in
+order with the job's progress ticked. **Add a tip in `HELP` and nothing
+else** — the three views cannot drift apart. Nothing pops over the start
+page any more; the instructions are the start page.
+
+### The clipboard is in metres
+
+`packSelection()` lifts a selection off the sheet with every point in
+metres about the centre of its own extent; `placePack()` sets it down at a
+point on whatever sheet is loaded, at that sheet's `pxPerM`. Both
+Duplicate and Copy/Paste go through them, so there is one copying path.
+The pack is kept in memory and under `CLIP_KEY` in `localStorage`, which
+is what lets one floor's fan coil set-out be pasted on the next after
+*Change layout* at a different scale. A pack carries the old ids only so
+run ends can be tied to their copies; anything not copied gets a joint.
+
+### Fittings are counted, never used in a length
+
+`bendsOf()` gives every section `fittings = { b90, b45, risers, elbows }`
+— plan corners by their turn (≥ 67.5° is a 90, ≥ 22.5° a 45, under 10°
+ignored), risers at the start, the end, every height change and twice any
+`extraRise`, and elbows = bends + 2 × risers. Each air system totals its
+`tees` (a `djoint` with three or more ducts) and `elbows`. They appear in
+the inspector, the schedule drawer, both reports and the Excel sheets.
+They are for whoever sizes the pipe or the duct; no length here uses them.
+
 ### Tape measure is not a pipe
 
 **Tape** (`tool: 'tape'`, key `M`) is a plan annotation: click along a
@@ -281,10 +381,11 @@ re-encode the bitmap and soften it; the dialog says so.
   and a sentence wraps into a block 200 px tall that sits over the drawing and
   swallows the clicks meant for it. That is a bug that looks like "clicking
   does nothing", so keep the lines short and keep both offsets.
-- **Units are drawn at their real footprint once you are zoomed in far
-  enough**, and at a legible minimum when you are not (`unitBox()`). That is
-  what puts a 600 cassette on its ceiling tile. Both sides of the box scale
-  together, so the aspect is never distorted to make a unit visible.
+- **Units are drawn at their real footprint** (`unitBox()`), at every zoom
+ by default — that is what puts a 600 cassette on its ceiling tile. With
+ *true size* turned off they grow to a legible minimum when zoomed out; both
+ sides of the box scale together, so the aspect is never distorted to make a
+ unit visible.
 - **The type's size and angle are a starting figure, not a fact.** `n.w` and
   `n.d` are the footprint in real metres and `n.rot` is any angle in degrees —
   set by dragging the corner handles and the arm on the plan, or typed into
@@ -344,21 +445,56 @@ re-encode the bitmap and soften it; the dialog says so.
   healed, so it says so and offers the destructive option rather than doing it
   quietly. `mergeAtBranch()`.
 - **Undo is snapshots of the take-off only** — nodes and sections. Not the
-  drawing, the scale or the settings: a snapshot carrying the image would be
-  megabytes. `pushUndo(label)` goes *before* the change; `asOneUndo()` and the
-  `undoSuspended` flag group several edits that are really one action.
-  Rotating pushes an undo entry for the geometry, but the bitmap does not come
-  back — undoing a rotation puts the trace back on a turned sheet. Turn it
-  back instead.
+ drawing, the scale or the settings: a snapshot carrying the image would be
+ megabytes. `pushUndo(label)` goes *before* the change; `asOneUndo()` and the
+ `undoSuspended` flag group several edits that are really one action.
+ **The one exception is a rotation**: `rotateDrawing()` passes the sheet it
+ turned from as `pushUndo(label, { img, rotation })`, so undoing it puts
+ the trace back on the drawing it was made on. Only the newest
+ `UNDO_IMG_MAX` (3) rotations keep their bitmap; an older one undoes the
+ geometry and says the sheet stays turned.
+- **Labels have a level.** `labelLevel()` is 2 for everything, 1 for names
+ and lengths only, 0 for warnings only. `S.settings.labels` is `auto`
+ (drops to 1 under 22 px to the metre on screen), `all` or `none`; the
+ **Aa** button in the zoomer cycles it. Exports set `exporting` and always
+ get level 2. `setZoom()` schedules a redraw because the level reads the
+ zoom.
+- **Walks use an index built for the pass.** `adjacencyOf()`, `groupBy()`
+ and `feedMap()` are built at the top of `buildTree()`, `solveDucts()`,
+ `rollUpDuty()`, `autoName*()`, `systemsStats()` and `drawPipeJoins()` and
+ thrown away. They are never kept on `S`: the arrays are replaced wholesale
+ by delete and merge, and a kept index would lie. `neighbours()` and
+ `ductNeighbours()` remain for one-off calls.
 - **Nothing `solve()` works out is written to the save file.**
   `projectBundle()` strips every derived field off nodes and sections. It all
   comes back from the geometry, and a stale derived figure in a file is a bug
   that survives reloads.
 - **The take-off is also kept in the browser.** `autosave()` runs off the back
-  of `render()`, and is offered back on the next visit rather than restored
-  silently — opening the tool to find someone else's job in it is worse than
-  one extra click. The drawing is stored under its own key because it is by
-  far the biggest part; if it will not fit, the take-off is still kept.
+ of `render()`, and is offered back on the next visit rather than restored
+ silently — opening the tool to find someone else's job in it is worse than
+ one extra click. The drawing is stored under its own key because it is by
+ far the biggest part; if it will not fit, the take-off is still kept. **The
+ drawing is written once, not on every autosave** (`autosavedImgSrc`): it
+ is megabytes, and serialising it a second after every drag and keystroke
+ — and throwing a quota error each time it did not fit — was a stall on the
+ main thread that read as the tool freezing on a long session.
+- **Pointer moves are drawn once a frame.** `scheduleRender()` coalesces the
+ hover, drag, lasso and handle redraws into one `requestAnimationFrame`;
+ every redraw solves the whole take-off, and drawing on every move is what
+ made a big job feel stuck under the cursor. `render()` itself is still
+ synchronous for everything that is not a pointer move.
+- **A drag cannot outlive the window.** `blur` clears `drag`, `panning` and
+ `marquee`. Alt-Tab or the file dialog mid-drag means the pointer never
+ comes up on the scroller, and without this the last thing grabbed kept
+ following the mouse with no button held until the next click.
+- **Shift before a grab is not a pan.** With Select armed the handles and the
+ duct end handle are tested before the Shift check, because Shift is what
+ keeps a unit's shape while it is dragged; Shift-click on a thing adds it to
+ the selection; Shift on open paper still pans. In every other tool Shift
+ pans as it always did.
+- **`undoSuspended` is only ever set inside `asOneUndo()`**, whose `finally`
+ clears it. Setting it by hand around a call that can throw left undo
+ silently recording nothing for the rest of the session.
 - **Number inputs must not respond to the scroll wheel.** Wheel over a focused
   number field blurs it. Arrow keys blocked, spinners hidden. This is a
   deliberate safety decision — scrolling a page was silently changing design
@@ -498,15 +634,57 @@ Five minutes, and it exercises everything:
    height staff reads off, that a 3-pipe run shows three lines, and that the
    unit you resized and turned stands the same way there as on the plan.
 9. **Ductwork.** Put low/medium/high on a ducted unit as l/s, then toggle
-   to m³/h and confirm 111 l/s reads as 400 m³/h. Tick a speed, then trace
-   a supply duct that T-pieces to two outlets. Confirm each outlet and each
-   leg past the tee shows **half** the unit figure. Pin one outlet to a
-   different volume and confirm the other re-shares what is left, and that
-   the main rolls up the sum. Cut a T-piece (J) into a run already traced
-   and branch a third outlet; the shares must readjust. A size gives a
-   velocity. Ticking *Ventilated sock* reports l/s per metre. Place a
-   controller and tick a unit against it.
-10. **HRV.** Place an HRV. Type low/medium/high as l/s or m³/h, tick a
+ to m³/h and confirm 111 l/s reads as 400 m³/h. Tick a speed, then trace
+ a supply duct that T-pieces to two outlets. Confirm each outlet and each
+ leg past the tee shows **half** the unit figure. Pin one outlet to a
+ different volume and confirm the other re-shares what is left, and that
+ the main rolls up the sum. Cut a T-piece (J) into a run already traced
+ and branch a third outlet; the shares must readjust. A size gives a
+ velocity. Ticking *Ventilated sock* reports l/s per metre. Place a
+ controller and tick a unit against it.
+ **Abandoned starts.** With Duct armed, click on open paper and press
+ Escape: no joint is left. Click on a duct already traced and press
+ Escape: it is still one duct. Double-click on the spot: nothing is
+ added. Then start on that duct and finish on an outlet: the run is cut
+ once, into a T, and one Undo takes the whole thing back.
+ **Duct length.** Select a duct that ends on an outlet. A square handle
+ sits on the outlet end with the plan length beside it. Drag it along
+ the run and confirm the unit end does not move and the outlet comes with
+ it. Type *Plan length* 4.00 in the inspector and confirm the schedule
+ says 4.00 m. Select a duct between the unit and a T-piece: the field is
+ disabled and says both ends are fixed.
+10. **Lasso and copy.** With Select armed, drag a box around a ducted unit,
+ its ducts and its grilles. The inspector says what was picked up. Drag
+ the unit and confirm the whole lot moves together. Shift-click a grille
+ to take it out and back in. Ctrl+D: a copy appears one extent to the
+ right, still selected, with new names and its own `D` / `E` runs; Check
+ must see two ducted units each with their own air. Undo removes the copy
+ in one step. Lasso again and press Delete: everything picked goes, and
+ nothing else.
+11. **True size.** Zoom right out. A 600 cassette is still 600 mm on the
+ grid, not a legible box, and a Ø315 duct is a 315 mm band. In 3D a
+ sized duct is a box of its real width and depth and the units stand at
+ their real footprint. Turn *Draw units and ducts at true size* off in
+ Job & defaults and confirm the legibility minimum comes back on the plan
+ and in 3D. Turn it back on before the reports.
+ **Labels.** Zoomed right out the labels drop to names and lengths; the
+ **Aa** button cycles everything / none / automatic and the PDF plate
+ still carries everything.
+ **Moving.** Shift-drag a unit and confirm it lands on 0.60 m steps.
+ Arrow-nudge it four times and press Undo once: all four go. *Move by*
+ 1.50 across moves it exactly 1.50 m.
+ **Copy to the next floor.** Lasso a fan coil and its ducts, Ctrl+C,
+ *Change layout* to another sheet, set a different scale, Ctrl+V: the
+ set-out lands under the cursor at the same metres.
+ **Rotation undo.** Rotate 90°, then Undo: the sheet turns back with the
+ trace.
+ **Fittings.** A duct with two corners and a riser reports 2 × 90°,
+ risers, and the elbows; the Ductwork tab, the PDF and the Excel carry a
+ Bends column; the ventilation figures carry T-pieces and elbows.
+ **Help.** Open the file with no drawing: every tip is on the start page
+ and nothing pops over it. Press `?`: the pane opens, search narrows it,
+ the armed tool's tips are marked. *How to use* ticks what is done.
+12. **HRV.** Place an HRV. Type low/medium/high as l/s or m³/h, tick a
     speed. Trace outdoor and exhaust to louvres, supply and return to rooms.
     Confirm the sections name as `OA` / `EA` / `SA` / `RA`, not `D` / `E`.
     Drop an inline heater on the OA run — it sits in the line, not as a
@@ -517,15 +695,15 @@ Five minutes, and it exercises everything:
     Change the box size by dragging a corner. Tick the HRV on a controller.
     Run Check on an HRV-only sheet: it must come back clean without asking
     for a condenser.
-11. **Line sizes.** Open the schedule, tick every section, set a liquid, a gas
+13. **Line sizes.** Open the schedule, tick every section, set a liquid, a gas
     and an HP gas size and apply them. Confirm the HP gas is skipped on the
     2-pipe sections and named in the toast, and that the inspector shows the
     same sizes as the drawer for whichever section is selected.
-12. **Save**, reload the page, **Open** the file. Every section name, length,
+14. **Save**, reload the page, **Open** the file. Every section name, length,
     point height, footprint, angle, connection point, line size, duct size,
     air volume, HRV stream, heater, grille, controller and tape measure
     must come back identical.
-13. **PDF report** — the layout plan and both 3D pictures must be there, in
+15. **PDF report** — the layout plan and both 3D pictures must be there, in
     colour, with the section labels legible. An HRV job must show the
     ventilation heading and the room in/out line. **Excel** — open it and
     confirm *Pipe sections* totals match the schedule drawer, that a job

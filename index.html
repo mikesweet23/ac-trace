@@ -175,23 +175,73 @@
   #sheet img { display: block; user-select: none; -webkit-user-drag: none; }
   #ov { position: absolute; inset: 0; overflow: visible; }
 
+  /* The start page: the drop zone first, then every instruction the tool
+     has, so someone opening it cold can read how it works before loading a
+     sheet. It scrolls; the drop zone stays at the top. */
   .board {
-    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    padding: 24px;
+    position: absolute; inset: 0; display: flex; align-items: flex-start; justify-content: center;
+    padding: 28px 24px 40px; overflow: auto;
     background-image:
       linear-gradient(var(--rule) 1px, transparent 1px),
       linear-gradient(90deg, var(--rule) 1px, transparent 1px);
     background-size: 26px 26px;
     background-color: var(--paper);
   }
-  .board-in { max-width: 520px; text-align: center; }
+  .board-in { max-width: 1040px; width: 100%; text-align: center; }
   .board h1 { font-size: 25px; font-weight: 800; letter-spacing: -0.02em; margin: 0 0 6px; }
   .board p { color: var(--ink-soft); font-size: 14px; line-height: 1.6; margin: 0 0 20px; }
   .board .drop {
     border: 2px dashed var(--rule-2); border-radius: 6px; padding: 30px 22px;
-    background: rgba(255,255,255,.72);
+    background: rgba(255,255,255,.72); max-width: 560px; margin: 0 auto;
   }
   .board .drop.hot { border-color: var(--measure); background: rgba(108,122,224,.09); }
+  .board-help { text-align: left; margin-top: 30px; }
+  .board-help > h2 {
+    font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
+    font-weight: 700; margin: 0 0 12px; text-align: center;
+  }
+  .board-help .help-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  .board-help .help-sec {
+    background: rgba(255,255,255,.86); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px 6px;
+  }
+  .board-help .help-sec h3 { margin: 0 0 6px; font-size: 14px; font-weight: 800; letter-spacing: -0.01em; }
+  .board-help .tip { padding: 7px 0 8px; border-top: 1px solid var(--rule); }
+  .board-help .tip h4 { margin: 0 0 3px; font-size: 12.5px; font-weight: 700; }
+  .board-help .tip p { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-soft); }
+  .board-help .keys { grid-column: 1 / -1; }
+  table.mini.keys-tbl { width: 100%; }
+
+  /* ---- the help pane: every tip, searchable, at any time ---- */
+  .helpPane {
+    position: absolute; right: 0; top: 0; bottom: 0; width: 400px; max-width: 100%; z-index: 9;
+    background: var(--white); border-left: 1px solid var(--rule-2);
+    box-shadow: -6px 0 22px rgba(0,0,0,.10); display: none; flex-direction: column;
+  }
+  .helpPane.on { display: flex; }
+  .help-hd { padding: 10px 12px; border-bottom: 1px solid var(--rule); display: flex; align-items: center; gap: 10px; }
+  .help-hd h3 { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+  .help-hd input { flex: 1; min-width: 0; padding: 7px 9px; border: 1px solid var(--rule-2); border-radius: 4px; font-size: 12.5px; }
+  .help-nav { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--rule); background: var(--paper-2); }
+  .help-nav button {
+    border: 1px solid var(--rule-2); background: var(--white); border-radius: 12px; padding: 3px 9px;
+    font-size: 11px; color: var(--ink-soft);
+  }
+  .help-nav button:hover { border-color: var(--measure); color: var(--ink); }
+  .help-bd { overflow-y: auto; padding: 4px 14px 24px; flex: 1; min-height: 0; }
+  .help-bd h3 {
+    font-size: 11px; letter-spacing: .13em; text-transform: uppercase; color: var(--muted);
+    margin: 18px 0 4px; font-weight: 700;
+  }
+  .help-bd .tip { padding: 9px 10px 10px; border-left: 3px solid var(--rule); margin: 6px 0; border-radius: 0 4px 4px 0; }
+  .help-bd .tip.now { border-left-color: var(--measure); background: #f3f4fd; }
+  .help-bd .tip h4 { margin: 0 0 4px; font-size: 13px; font-weight: 700; }
+  .help-bd .tip p { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--ink-soft); }
+  .help-bd .tip kbd, .board-help .tip kbd {
+    font-family: 'Azeret Mono', monospace; font-size: 10.5px; background: var(--paper-2);
+    border: 1px solid var(--rule-2); padding: 1px 5px; border-radius: 3px; color: var(--ink);
+  }
+  .help-bd .empty { color: var(--muted); font-size: 13px; padding: 20px 4px; }
+  @media (max-width: 860px) { .helpPane { width: 100%; } }
 
   .btn {
     background: var(--graphite); color: var(--paper); border: 1px solid var(--graphite);
@@ -620,7 +670,8 @@
     <button class="tb dwg" id="bOpenDwg">Open layout</button>
     <button class="tb" id="bRotate" disabled title="Turn the drawing — the trace turns with it">&#8635; Rotate</button>
     <button class="tb" id="bProj">Job &amp; defaults</button>
-    <button class="tb" id="bSteps">How to use</button>
+    <button class="tb" id="bSteps" title="The steps of a take-off, in order, with what is done ticked off">How to use</button>
+    <button class="tb" id="bHelp" title="Every tip, searchable, at any time  (? or F1)">? Help</button>
     <button class="tb" id="bUndo" disabled title="Nothing to undo">&#8630; Undo</button>
     <div class="sp"></div>
     <button class="tb" id="bName" disabled title="Renumber every section down the drawing">Rename sections</button>
@@ -655,9 +706,20 @@
                routes between them. Every section carries its own height, so the risers
                and drops come out with the plan lengths.</p>
             <button class="btn go" id="bPick">Choose a layout</button>
-            <div style="margin-top:12px;font-size:12px;color:var(--muted)">or drop a file here</div>
+            <div style="margin-top:12px;font-size:12px;color:var(--muted)">or drop a file here &middot; or open a saved <span class="mono">.json</span> take-off</div>
           </div>
+          <div class="board-help" id="boardHelp"></div>
         </div>
+      </div>
+
+      <div class="helpPane" id="helpPane">
+        <div class="help-hd">
+          <h3>Help</h3>
+          <input id="helpQ" type="search" placeholder="Search the tips&hellip;" autocomplete="off">
+          <button class="btn ghost sm" id="helpClose">Close</button>
+        </div>
+        <div class="help-nav" id="helpNav"></div>
+        <div class="help-bd" id="helpBody"></div>
       </div>
 
       <div class="hint" id="hint">
@@ -691,6 +753,7 @@
         <div class="lvl" id="zLvl">100%</div>
         <button id="zIn" title="Zoom in">+</button>
         <button id="zFit" title="Fit the drawing">Fit</button>
+        <button id="zLbl" title="Labels">Aa</button>
       </div>
 
       <div class="drawer" id="drawer">
@@ -1109,6 +1172,9 @@ const S = {
     showKw: true,              // duties on the unit boxes
     showHeights: true,         // the height beside each section
     showTypes: true,           // the unit type abbreviation on the box
+    trueSize: true,            // units and ducts at their real footprint at every zoom, in 3D and in the reports
+    labels: 'auto',            // auto | all | none — how much is written beside things on the plan
+    gridM: 0.60,               // the ceiling grid: Shift while dragging steps a move by this
     condenserHeight: 0.30,     // default heights above finished floor, metres
     pipeHeight: 3.20,
     indoorHeight: 2.70,
@@ -1168,11 +1234,23 @@ function undoSnapshot() {
   return JSON.stringify({ nodes: S.nodes, segs: S.segs, ducts: S.ducts,
     measures: S.measures, nextId: S.nextId });
 }
-/* Call before the change, with a few words for the button's tooltip. */
-function pushUndo(label) {
+/* Call before the change, with a few words for the button's tooltip.
+   `extra.img` is only ever given by rotateDrawing(): the one change that
+   turns the sheet as well as the trace keeps the sheet it turned from, so
+   undoing it puts the trace back on the drawing it was made on. Bitmaps are
+   megabytes, so only the newest few rotations keep theirs. */
+const UNDO_IMG_MAX = 3;
+function pushUndo(label, extra) {
   if (undoSuspended) return;
-  undoStack.push({ label: label || 'change', state: undoSnapshot() });
+  const step = { label: label || 'change', state: undoSnapshot() };
+  if (extra && extra.img) { step.img = extra.img; step.rotation = extra.rotation || 0; }
+  undoStack.push(step);
   if (undoStack.length > UNDO_MAX) undoStack.shift();
+  let kept = 0;
+  for (let i = undoStack.length - 1; i >= 0; i--) {
+    if (!undoStack[i].img) continue;
+    if (++kept > UNDO_IMG_MAX) { delete undoStack[i].img; undoStack[i].imgDropped = true; }
+  }
   refreshUndoBtn();
 }
 /* Several edits that are really one action get one entry between them. */
@@ -1187,11 +1265,18 @@ function undo() {
   const d = JSON.parse(step.state);
   S.nodes = d.nodes; S.segs = d.segs; S.ducts = d.ducts || [];
   S.measures = d.measures || []; S.nextId = d.nextId;
-  draft = null; sel = null;
+  draft = null; sel = null; drag = null; marquee = null;
   closeInspector();
   refreshUndoBtn();
+  if (step.img) {
+    S.img = step.img; S.rotation = step.rotation || 0;
+    showDrawing({});
+    toast('Undone: ' + step.label + ' — the sheet turned back with the trace');
+    return;
+  }
   render();
-  toast('Undone: ' + step.label);
+  toast('Undone: ' + step.label + (step.imgDropped
+    ? ' — the trace is back where it was, but the sheet stays turned: use Rotate to turn it back' : ''));
 }
 function refreshUndoBtn() {
   const b = el('bUndo');
@@ -1308,6 +1393,67 @@ function riseBreakdown(sg) {
 function neighbours(nodeId) {
   return S.segs.filter(s => s.a === nodeId || s.b === nodeId);
 }
+/* ---------- indexes for one pass ----------
+   Every walk used to find a node's runs by filtering the whole list, once per
+   node, on every redraw — and rolling the duty up walked the tree once per
+   section. On a floor of a hundred sections that was millions of comparisons
+   a frame, which is what made a big job feel stuck under the cursor. These
+   are built once per pass and thrown away: they are never kept on S, because
+   the arrays are replaced wholesale by delete and merge. */
+function adjacencyOf(runs) {
+  const m = {};
+  runs.forEach(r => {
+    (m[r.a] = m[r.a] || []).push(r);
+    if (r.b !== r.a) (m[r.b] = m[r.b] || []).push(r);
+  });
+  return m;
+}
+function groupBy(runs, key) {
+  const m = {};
+  runs.forEach(r => { (m[r[key]] = m[r[key]] || []).push(r); });
+  return m;
+}
+/* The section that feeds each node, once the tree is oriented. */
+function feedMap() {
+  const m = {};
+  S.segs.forEach(s => { if (!s.orphan) m[s.down] = s; });
+  return m;
+}
+
+/* ---------- fittings ----------
+   The count of bends a run turns through on plan, and the risers in it, is
+   what the sizing tool wants next after the length: every elbow is an
+   equivalent length. Counted, not priced, and never used in a length here. */
+function bendsOf(run) {
+  const pts = run.pts || [];
+  let b90 = 0, b45 = 0;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const a = pts[i - 1], p = pts[i], c = pts[i + 1];
+    const a1 = Math.atan2(p.y - a.y, p.x - a.x), a2 = Math.atan2(c.y - p.y, c.x - p.x);
+    let turn = Math.abs(a2 - a1) * 180 / Math.PI;
+    if (turn > 180) turn = 360 - turn;
+    if (turn < 10) continue;
+    if (turn >= 67.5) b90++; else b45++;
+  }
+  const hs = heightsOf(run);
+  let risers = 0;
+  for (let i = 1; i < hs.length; i++) if (Math.abs(hs[i] - hs[i - 1]) > 0.005) risers++;
+  const up = nodeById(run.up != null ? run.up : run.a);
+  const dn = nodeById(run.down != null ? run.down : run.b);
+  if (up && hs.length && Math.abs(heightOf(up) - hs[0]) > 0.005) risers++;
+  if (dn && hs.length && Math.abs(heightOf(dn) - hs[hs.length - 1]) > 0.005) risers++;
+  if (Math.abs(parseFloat(run.extraRise) || 0) > 0.005) risers += 2;
+  // a riser is two elbows: one up into it, one back to the horizontal
+  return { b90, b45, risers, elbows: b90 + b45 + risers * 2 };
+}
+function fittingsText(f) {
+  if (!f) return '';
+  const bits = [];
+  if (f.b90) bits.push(f.b90 + ' × 90°');
+  if (f.b45) bits.push(f.b45 + ' × 45°');
+  if (f.risers) bits.push(plural(f.risers, 'riser'));
+  return bits.length ? bits.join(', ') + ' — ' + plural(f.elbows, 'elbow') : 'straight';
+}
 
 function buildTree() {
   S.nodes.forEach(n => { n.reached = false; n.sysId = null; n.depth = 0; });
@@ -1316,6 +1462,7 @@ function buildTree() {
     s.orphan = true; s.sysId = null; s.afterBc = false;
   });
 
+  const adj = adjacencyOf(S.segs);
   const roots = S.nodes.filter(n => n.type === 'condenser');
   roots.forEach(root => {
     root.reached = true; root.sysId = root.id;
@@ -1324,7 +1471,7 @@ function buildTree() {
     const seen = { [root.id]: true };
     while (stack.length) {
       const cur = stack.pop();
-      neighbours(cur.id).forEach(sg => {
+      (adj[cur.id] || []).forEach(sg => {
         if (sg.up !== null) return;                       // already oriented
         const other = sg.a === cur.id ? sg.b : sg.a;
         if (seen[other]) return;                          // would close a loop
@@ -1348,14 +1495,15 @@ function buildTree() {
 }
 
 /* Every indoor unit downstream of a node, the condenser side excluded. */
-function subtreeIndoors(nodeId, seen) {
+function subtreeIndoors(nodeId, seen, outsBy) {
   seen = seen || {};
+  outsBy = outsBy || groupBy(S.segs.filter(s => !s.orphan), 'up');
   if (seen[nodeId]) return [];
   seen[nodeId] = true;
   const n = nodeById(nodeId);
   let out = (n && n.type === 'indoor') ? [n] : [];
-  S.segs.filter(s => s.up === nodeId && !s.orphan).forEach(sg => {
-    out = out.concat(subtreeIndoors(sg.down, seen));
+  (outsBy[nodeId] || []).forEach(sg => {
+    out = out.concat(subtreeIndoors(sg.down, seen, outsBy));
   });
   return out;
 }
@@ -1400,10 +1548,11 @@ function autoNameSections(quiet) {
   const runSegs = {};                     // the sections each named run is made of
 
   const seenWalk = {};
+  const outsBy = groupBy(S.segs.filter(s => !s.orphan), 'up');
   const walk = (nodeId, runName, level) => {
     if (seenWalk[nodeId]) return;
     seenWalk[nodeId] = true;
-    const outs = S.segs.filter(s => s.up === nodeId && !s.orphan);
+    const outs = (outsBy[nodeId] || []).slice();
     // the leg carrying the most duty carries on as the same run; the rest branch
     outs.sort((x, y) => (y.kw || 0) - (x.kw || 0) || (y.nIndoor || 0) - (x.nIndoor || 0));
     let sub = 0;
@@ -1447,11 +1596,25 @@ function autoNameSections(quiet) {
    Everything derived, recomputed on every render. Nothing here is stored in
    the save file — it all comes back from the geometry.
    ========================================================================== */
+/* One walk from each condenser, leaves first, so every section is visited
+   once rather than the whole subtree being re-walked for every section. */
 function rollUpDuty() {
+  const outsBy = groupBy(S.segs.filter(s => !s.orphan), 'up');
+  const memo = {};
+  const below = nodeId => {
+    if (memo[nodeId]) return memo[nodeId];
+    memo[nodeId] = { n: 0, kw: 0 };                 // guards a loop while it is being walked
+    const node = nodeById(nodeId);
+    let n = (node && node.type === 'indoor') ? 1 : 0;
+    let kw = n ? indoorKw(node) : 0;
+    (outsBy[nodeId] || []).forEach(sg => { const k = below(sg.down); n += k.n; kw += k.kw; });
+    memo[nodeId] = { n, kw };
+    return memo[nodeId];
+  };
   S.segs.forEach(sg => {
-    const kids = subtreeIndoors(sg.down);
-    sg.nIndoor = kids.length;
-    sg.kw = kids.reduce((t, n) => t + indoorKw(n), 0);
+    const k = sg.orphan ? { n: 0, kw: 0 } : below(sg.down);
+    sg.nIndoor = k.n;
+    sg.kw = k.kw;
   });
 }
 
@@ -1467,6 +1630,7 @@ function solve() {
     sg.lengthM = sg.routeM + sg.riseM;
     sg.pipes = pipesOf(sg);
     sg.pipeM = sg.lengthM * sg.pipes;
+    sg.fittings = bendsOf(sg);
     const dn = nodeById(sg.down);
     sg.role = sg.orphan ? 'orphan'
             : /^M/.test(sg.ref || '') ? 'main'
@@ -1477,12 +1641,13 @@ function solve() {
 }
 
 /* The sections between a condenser and one indoor unit, in order. */
-function pathToNode(nodeId) {
+function pathToNode(nodeId, feedBy) {
+  feedBy = feedBy || feedMap();
   const out = [];
   let cur = nodeById(nodeId);
   let guard = 0;
   while (cur && guard++ < 500) {
-    const feed = S.segs.find(s => s.down === cur.id && !s.orphan);
+    const feed = feedBy[cur.id];
     if (!feed) break;
     out.unshift(feed);
     cur = nodeById(feed.up);
@@ -1498,9 +1663,11 @@ function pathToNode(nodeId) {
    selection software, which is the only place that can be right.
    ========================================================================== */
 function systemsStats() {
+  const feedBy = feedMap();
+  const outsBy = groupBy(S.segs.filter(s => !s.orphan), 'up');
   return S.nodes.filter(n => n.type === 'condenser').map(cond => {
     const segs = S.segs.filter(s => s.sysId === cond.id && !s.orphan);
-    const indoors = subtreeIndoors(cond.id).filter(n => n.id !== cond.id);
+    const indoors = subtreeIndoors(cond.id, null, outsBy).filter(n => n.id !== cond.id);
     const sys = SYSTEMS[cond.system] || SYSTEMS.vrf2;
 
     const totalRouteM = segs.reduce((t, s) => t + s.lengthM, 0);
@@ -1511,7 +1678,7 @@ function systemsStats() {
     // the actual run to each indoor unit, and the furthest of them
     let longest = null;
     const runs = indoors.map(n => {
-      const path = pathToNode(n.id);
+      const path = pathToNode(n.id, feedBy);
       const L = path.reduce((t, s) => t + s.lengthM, 0);
       const rec = { unit: n, path, lengthM: L };
       if (!longest || L > longest.lengthM) longest = rec;
@@ -1526,7 +1693,7 @@ function systemsStats() {
       for (const sg of longest.path) {
         const dn = nodeById(sg.down);
         run += sg.lengthM;
-        const splits = S.segs.filter(s => s.up === sg.down && !s.orphan).length > 1;
+        const splits = (outsBy[sg.down] || []).length > 1;
         if ((dn && (dn.type === 'branch' || dn.type === 'bc')) || splits) {
           firstBranchM = run;
           afterFirstBranchM = longest.lengthM - run;
@@ -1604,12 +1771,13 @@ function solveDucts() {
     d.kind = ductKind(d.kind);
   });
 
+  const adj = adjacencyOf(S.ducts);
   roots.forEach(root => {
     root.unitId = root.id;
     const stack = [root.id], seen = { [root.id]: true };
     while (stack.length) {
       const cur = stack.pop();
-      ductNeighbours(cur).forEach(d => {
+      (adj[cur] || []).forEach(d => {
         if (d.up !== null) return;
         const other = d.a === cur ? d.b : d.a;
         if (seen[other]) return;
@@ -1627,7 +1795,10 @@ function solveDucts() {
     d.riseM = r.total; d.rise = r;
     d.lengthM = d.routeM + d.riseM;
     d.area = ductArea(d);
+    d.fittings = bendsOf(d);
   });
+  // a T-piece is a joint with three or more ducts on it, whichever stream
+  const teeNodes = S.nodes.filter(n => n.type === 'djoint' && (adj[n.id] || []).length >= 3);
 
   /* The unit figure is the supply air for this stream as a whole. Unpinned
      outlets share it; a T that feeds two equal grilles therefore carries
@@ -1735,6 +1906,8 @@ function solveDucts() {
                  + mine.reduce((t, d) => t + (d.takeOff || 0), 0),
       nOutlets: outs.length + sectionOutlets,
       maxVel: mine.reduce((m, d) => Math.max(m, d.vel || 0), 0),
+      tees: teeNodes.filter(n => n.unitId === root.id).length,
+      elbows: mine.reduce((t, d) => t + (d.fittings ? d.fittings.elbows : 0), 0),
     };
   });
 }
@@ -1787,9 +1960,342 @@ function totals() {
    ========================================================================== */
 let zoom = 1;
 let tool = 'select';          // select | pan | calib | condenser | indoor | bc | joint | trace
-let sel = null;               // { kind:'node'|'seg', id }
+let sel = null;               // { kind:'node'|'seg'|'duct'|'tape'|'calib', id } or a multi selection
 let draft = null;             // in-progress trace or calibration
 let hoverPt = null;
+let marquee = null;           // the lasso being dragged out with Select: { x0, y0, x1, y1, moved }
+
+/* ---------- several things at once ----------
+   A lasso dragged out over the plan, or Shift-clicks, build a selection of
+   many units, runs and tapes: { kind: 'multi', nodes: [], segs: [], ducts: [],
+   measures: [] }. Everything that draws a "picked" state asks isSel(), so a
+   single selection and a multiple one look the same on the sheet. */
+function emptyMulti() { return { kind: 'multi', nodes: [], segs: [], ducts: [], measures: [] }; }
+function multiList(m, kind) {
+  return kind === 'node' ? m.nodes : kind === 'seg' ? m.segs
+       : kind === 'duct' ? m.ducts : kind === 'tape' ? m.measures : null;
+}
+function multiCount(m) { return m.nodes.length + m.segs.length + m.ducts.length + m.measures.length; }
+function isSel(kind, id) {
+  if (!sel) return false;
+  if (sel.kind === 'multi') { const l = multiList(sel, kind); return !!l && l.indexOf(id) >= 0; }
+  return sel.kind === kind && sel.id === id;
+}
+/* A multi selection of one thing is just that thing; of nothing, nothing. */
+function settleMulti(m) {
+  const c = multiCount(m);
+  if (!c) return null;
+  if (c === 1) {
+    if (m.nodes.length) return { kind: 'node', id: m.nodes[0] };
+    if (m.segs.length) return { kind: 'seg', id: m.segs[0] };
+    if (m.ducts.length) return { kind: 'duct', id: m.ducts[0] };
+    return { kind: 'tape', id: m.measures[0] };
+  }
+  return m;
+}
+/* The current selection as a multi, whatever it is now. */
+function selAsMulti() {
+  const m = emptyMulti();
+  if (!sel || sel.kind === 'calib') return m;
+  if (sel.kind === 'multi') {
+    m.nodes = sel.nodes.slice(); m.segs = sel.segs.slice();
+    m.ducts = sel.ducts.slice(); m.measures = sel.measures.slice();
+    return m;
+  }
+  const l = multiList(m, sel.kind);
+  if (l) l.push(sel.id);
+  return m;
+}
+function toggleInSelection(kind, id) {
+  const m = selAsMulti();
+  const l = multiList(m, kind);
+  if (!l) return;
+  const i = l.indexOf(id);
+  if (i >= 0) l.splice(i, 1); else l.push(id);
+  sel = settleMulti(m);
+  if (sel) openInspector(); else closeInspector();
+  render();
+}
+/* Everything the lasso encloses: a unit by its centre, a run or a tape when
+   every point of it is inside, or when both of its end units are. */
+function selectInBox(bx) {
+  const x0 = Math.min(bx.x0, bx.x1), x1 = Math.max(bx.x0, bx.x1);
+  const y0 = Math.min(bx.y0, bx.y1), y1 = Math.max(bx.y0, bx.y1);
+  const inside = p => p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+  const m = emptyMulti();
+  S.nodes.forEach(n => { if (inside(n)) m.nodes.push(n.id); });
+  const nodeIn = {};
+  m.nodes.forEach(id => { nodeIn[id] = true; });
+  const runIn = r => (r.pts || []).length > 0
+    && ((r.pts.every(inside)) || (nodeIn[r.a] && nodeIn[r.b]));
+  S.segs.forEach(s => { if (runIn(s)) m.segs.push(s.id); });
+  S.ducts.forEach(d => { if (runIn(d)) m.ducts.push(d.id); });
+  (S.measures || []).forEach(t => { if ((t.pts || []).length && t.pts.every(inside)) m.measures.push(t.id); });
+  sel = settleMulti(m);
+  if (sel) openInspector(); else closeInspector();
+  render();
+  if (sel && sel.kind === 'multi') toast(multiSummary(sel) + ' selected — drag any of them to move the lot');
+}
+function selectAll() {
+  const m = emptyMulti();
+  m.nodes = S.nodes.map(n => n.id);
+  m.segs = S.segs.map(s => s.id);
+  m.ducts = S.ducts.map(d => d.id);
+  m.measures = (S.measures || []).map(t => t.id);
+  sel = settleMulti(m);
+  if (sel) openInspector(); else closeInspector();
+  render();
+}
+function multiSummary(m) {
+  const nodes = m.nodes.map(nodeById).filter(Boolean);
+  const bits = [];
+  const count = (list, one, many) => { if (list.length) bits.push(plural(list.length, one, many)); };
+  count(nodes.filter(n => n.type === 'condenser'), 'condenser');
+  count(nodes.filter(n => n.type === 'indoor'), 'indoor unit');
+  count(nodes.filter(n => n.type === 'bc'), 'BC box', 'BC boxes');
+  count(nodes.filter(n => n.type === 'hrv'), 'HRV');
+  count(nodes.filter(n => n.type === 'heater'), 'heater');
+  count(nodes.filter(n => n.type === 'outlet'), 'outlet');
+  count(nodes.filter(n => n.type === 'controller'), 'controller');
+  count(nodes.filter(n => n.type === 'branch' || n.type === 'djoint'), 'joint');
+  count(m.segs, 'pipe section');
+  count(m.ducts, 'duct');
+  count(m.measures, 'tape');
+  return bits.join(', ') || 'nothing';
+}
+/* Move everything selected by (dx, dy) in drawing pixels. Runs whose end
+   units are not in the selection are stretched, because syncSegEnds() puts
+   their ends back on the units that did not move. */
+function moveSelection(dx, dy) {
+  const m = selAsMulti();
+  m.nodes.forEach(id => { const n = nodeById(id); if (n) { n.x += dx; n.y += dy; } });
+  const movePts = r => { if (r) r.pts.forEach(p => { p.x += dx; p.y += dy; }); };
+  m.segs.forEach(id => movePts(segById(id)));
+  m.ducts.forEach(id => movePts(ductById(id)));
+  m.measures.forEach(id => movePts(measureById(id)));
+}
+function selectionBox() {
+  const m = selAsMulti();
+  const xs = [], ys = [];
+  m.nodes.forEach(id => { const n = nodeById(id); if (n) { xs.push(n.x); ys.push(n.y); } });
+  const take = r => { if (r) r.pts.forEach(p => { xs.push(p.x); ys.push(p.y); }); };
+  m.segs.forEach(id => take(segById(id)));
+  m.ducts.forEach(id => take(ductById(id)));
+  m.measures.forEach(id => take(measureById(id)));
+  if (!xs.length) return null;
+  const x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+  const y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+  return { x0, y0, x1, y1, w: x1 - x0, h: y1 - y0 };
+}
+function namePrefixFor(n) {
+  return n.type === 'condenser' ? 'CU' : n.type === 'indoor' ? 'IU'
+       : n.type === 'hrv' ? 'HRV' : n.type === 'heater' ? 'HTR'
+       : n.type === 'outlet' ? DUCT_KINDS[ductKindOf(n)].short
+       : n.type === 'controller' ? 'CTL'
+       : n.type === 'bc' ? (n.kind === 'single' ? 'BCS' : 'BC') : '';
+}
+/* A copy of everything selected, set down beside the original and left
+   selected so it can be dragged into place. Runs between two copied units
+   are copied between the copies; a run whose other end was not selected
+   gets a joint at that end in the copy, so the copy is complete and can be
+   joined up from there. Names are minted fresh; derived figures are not
+   copied because solve() works them out again. */
+const DERIVED_NODE = ['reached', 'sysId', 'depth', 'unitId', 'flow', 'auto', 'faceVel', 'faceArea'];
+const DERIVED_RUN = ['up', 'down', 'parentSeg', 'depth', 'orphan', 'sysId', 'afterBc', 'kw', 'nIndoor',
+  'routeM', 'rise', 'riseM', 'lengthM', 'pipes', 'pipeM', 'role', 'unitId',
+  'flow', 'takeOff', 'vel', 'area', 'nOutlets', 'perOutlet', 'perMetre', 'fittings'];
+
+/* ---------- a pack: a selection lifted off the sheet ----------
+   Everything selected, in METRES about the centre of its own extent rather
+   than in pixels of this drawing, so it can be set down on a sheet at a
+   different scale — the next floor — and come out the same size. The old
+   ids stay in it so run ends can be tied back together when it lands. */
+function packSelection(m) {
+  const box = selectionBox();
+  if (!box) return null;
+  const s = S.pxPerM > 0 ? S.pxPerM : 1;
+  const cx = (box.x0 + box.x1) / 2, cy = (box.y0 + box.y1) / 2;
+  const rel = p => (p.h === undefined ? { x: (p.x - cx) / s, y: (p.y - cy) / s }
+                                       : { x: (p.x - cx) / s, y: (p.y - cy) / s, h: p.h });
+  const strip = (o, keys) => { keys.forEach(k => delete o[k]); return o; };
+  const pack = { app: 'adi-ac-trace', kind: 'pack', w: box.w / s, h: box.h / s,
+                 nodes: [], segs: [], ducts: [], measures: [] };
+  m.nodes.forEach(id => {
+    const n = nodeById(id);
+    if (!n) return;
+    const c = strip(JSON.parse(JSON.stringify(n)), DERIVED_NODE);
+    const q = rel(n); c.x = q.x; c.y = q.y;
+    pack.nodes.push(c);
+  });
+  const runOut = r => {
+    const c = strip(JSON.parse(JSON.stringify(r)), DERIVED_RUN);
+    c.pts = r.pts.map(rel);
+    return c;
+  };
+  m.segs.forEach(id => { const r = segById(id); if (r) pack.segs.push(runOut(r)); });
+  m.ducts.forEach(id => { const r = ductById(id); if (r) pack.ducts.push(runOut(r)); });
+  m.measures.forEach(id => { const t = measureById(id); if (t) pack.measures.push({ pts: t.pts.map(rel), note: t.note || '' }); });
+  return pack;
+}
+/* Set a pack down with its centre at (cx, cy) on this drawing. Runs between
+   two packed units land between the copies; a run whose other end was not
+   packed gets a joint at that end, so the copy is complete and can be joined
+   up from there. Names are minted fresh. Returns the new selection. */
+function placePack(pack, cx, cy) {
+  const s = S.pxPerM > 0 ? S.pxPerM : 1;
+  const abs = p => (p.h === undefined ? { x: cx + p.x * s, y: cy + p.y * s }
+                                       : { x: cx + p.x * s, y: cy + p.y * s, h: p.h });
+  const out = emptyMulti();
+  const idMap = {};
+  pack.nodes.forEach(n => {
+    const c = JSON.parse(JSON.stringify(n));
+    const q = abs(n);
+    c.id = nid(); c.x = q.x; c.y = q.y;
+    const pre = namePrefixFor(c);
+    if (pre) c.name = nextName(pre);
+    S.nodes.push(c);
+    idMap[n.id] = c.id;
+    out.nodes.push(c.id);
+  });
+  // a controller in the copy drives the copied units, not the originals
+  out.nodes.forEach(id => {
+    const c = nodeById(id);
+    if (c && c.serves) c.serves = c.serves.map(x => idMap[x]).filter(x => x !== undefined);
+  });
+  const endFor = (endId, at, duct) => {
+    if (idMap[endId] !== undefined) return idMap[endId];
+    const j = { id: nid(), type: duct ? 'djoint' : 'branch', x: at.x, y: at.y,
+                height: at.h !== undefined ? at.h : (duct ? S.settings.ductHeight : S.settings.pipeHeight) };
+    S.nodes.push(j);
+    out.nodes.push(j.id);
+    return j.id;
+  };
+  const runIn = (r, duct) => {
+    const c = JSON.parse(JSON.stringify(r));
+    c.id = nid();
+    c.pts = r.pts.map(abs);
+    c.a = endFor(r.a, c.pts[0], duct);
+    c.b = endFor(r.b, c.pts[c.pts.length - 1], duct);
+    if (idMap[r.a] === undefined) c.aOff = null;
+    if (idMap[r.b] === undefined) c.bOff = null;
+    c.name = '';
+    return c;
+  };
+  (pack.segs || []).forEach(r => { const c = runIn(r, false); S.segs.push(c); out.segs.push(c.id); });
+  (pack.ducts || []).forEach(r => { const c = runIn(r, true); S.ducts.push(c); out.ducts.push(c.id); });
+  (pack.measures || []).forEach(t => {
+    const c = { id: nid(), pts: t.pts.map(abs), name: '', ref: nextTapeName(), note: t.note || '' };
+    S.measures.push(c);
+    out.measures.push(c.id);
+  });
+  if (S.settings.autoName !== false) { autoNameSections(true); autoNameDucts(true); }
+  return out;
+}
+function duplicateSelection() {
+  const m = selAsMulti();
+  if (!multiCount(m)) { toast('Select something to duplicate first'); return; }
+  const pack = packSelection(m);
+  const box = selectionBox();
+  const gap = S.pxPerM > 0 ? Math.max(S.pxPerM * 0.6, box.w * 0.25) : 40;
+  let out = null;
+  asOneUndo('duplicate ' + multiSummary(m), () => {
+    out = placePack(pack, (box.x0 + box.x1) / 2 + box.w + gap, (box.y0 + box.y1) / 2);
+  });
+  sel = settleMulti(out);
+  if (sel) openInspector();
+  render();
+  toast('Copied ' + multiSummary(out) + ' — drag it into place');
+}
+
+/* ---------- the clipboard ----------
+   Kept in the browser as well as in memory, so a fan coil set-out copied on
+   one floor can be pasted on the next after Change layout — or tomorrow. It
+   is in metres, so a different scale on the next sheet does not matter. */
+const CLIP_KEY = 'adi-ac-trace-clipboard';
+let clipboard = null;
+function clipboardRead() {
+  if (clipboard) return clipboard;
+  try {
+    const raw = localStorage.getItem(CLIP_KEY);
+    const p = raw ? JSON.parse(raw) : null;
+    if (p && p.kind === 'pack') clipboard = p;
+  } catch (e) {}
+  return clipboard;
+}
+function clipSummary(p) {
+  const bits = [];
+  const units = (p.nodes || []).filter(n => n.type !== 'branch' && n.type !== 'djoint').length;
+  if (units) bits.push(plural(units, 'unit'));
+  if ((p.segs || []).length) bits.push(plural(p.segs.length, 'pipe section'));
+  if ((p.ducts || []).length) bits.push(plural(p.ducts.length, 'duct'));
+  if ((p.measures || []).length) bits.push(plural(p.measures.length, 'tape'));
+  return bits.join(', ') || 'nothing';
+}
+function copySelection() {
+  const m = selAsMulti();
+  if (!multiCount(m)) { toast('Select something to copy first'); return; }
+  const pack = packSelection(m);
+  if (!pack) return;
+  clipboard = pack;
+  try { localStorage.setItem(CLIP_KEY, JSON.stringify(pack)); } catch (e) {}
+  toast('Copied ' + clipSummary(pack) + ' — Ctrl+V pastes it here or on the next layout');
+  if (sel) openInspector();
+}
+/* Where the cursor last was on the sheet, whatever the tool, so a paste
+   lands under it. Outside the sheet, the middle of the view. */
+let lastPointer = null;
+function pasteAt() {
+  if (lastPointer && S.img && lastPointer.x >= 0 && lastPointer.y >= 0
+      && lastPointer.x <= S.img.w && lastPointer.y <= S.img.h) return lastPointer;
+  const sc2 = el('scroller');
+  return { x: (sc2.scrollLeft + sc2.clientWidth / 2) / zoom, y: (sc2.scrollTop + sc2.clientHeight / 2) / zoom };
+}
+function pasteClipboard(at) {
+  if (!S.img) { toast('Load a layout first'); return; }
+  if (scaleNeeded()) { scaleGate(); return; }
+  const pack = clipboardRead();
+  if (!pack) { toast('Nothing on the clipboard — select something and press Ctrl+C'); return; }
+  const p = at || pasteAt();
+  let out = null;
+  asOneUndo('paste ' + clipSummary(pack), () => { out = placePack(pack, p.x, p.y); });
+  setTool('select');
+  sel = settleMulti(out);
+  if (sel) openInspector();
+  render();
+  toast('Pasted ' + clipSummary(pack) + ' — drag it into place');
+}
+/* Arrow keys move what is selected; a run of presses is one undo step. */
+let lastNudgeAt = 0;
+function nudgeSelection(dx, dy) {
+  if (!sel || sel.kind === 'calib') return false;
+  const now = Date.now();
+  if (now - lastNudgeAt > 1500) pushUndo('nudge ' + multiSummary(selAsMulti()));
+  lastNudgeAt = now;
+  moveSelection(dx, dy);
+  render();
+  return true;
+}
+function deleteMulti() {
+  const m = selAsMulti();
+  if (!multiCount(m)) return;
+  asOneUndo('delete ' + multiSummary(m), () => {
+    const gone = {}, touched = {};
+    m.nodes.forEach(id => { gone[id] = true; });
+    const dropRun = r => m.segs.indexOf(r.id) >= 0 || m.ducts.indexOf(r.id) >= 0 || gone[r.a] || gone[r.b];
+    S.segs.concat(S.ducts).forEach(r => { if (dropRun(r)) { touched[r.a] = true; touched[r.b] = true; } });
+    S.segs = S.segs.filter(s => !dropRun(s));
+    S.ducts = S.ducts.filter(d => !dropRun(d));
+    S.measures = (S.measures || []).filter(t => m.measures.indexOf(t.id) < 0);
+    S.nodes.forEach(x => { if (x.serves) x.serves = x.serves.filter(id => !gone[id]); });
+    S.nodes = S.nodes.filter(x => !gone[x.id]);
+    // a joint left joining nothing is not a joint
+    S.nodes = S.nodes.filter(x => !touched[x.id]
+      || !((x.type === 'branch' && neighbours(x.id).length === 0)
+        || (x.type === 'djoint' && ductNeighbours(x.id).length === 0)));
+    if (S.settings.autoName !== false) { autoNameSections(true); autoNameDucts(true); }
+  });
+  sel = null; closeInspector(); render();
+}
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 function mk(tag, attrs, txt) {
@@ -1812,6 +2318,8 @@ function setZoom(z, anchor) {
   applyZoom();
   sc.scrollLeft = cx * zoom - (anchor ? anchor.sx : sc.clientWidth / 2);
   sc.scrollTop  = cy * zoom - (anchor ? anchor.sy : sc.clientHeight / 2);
+  // the automatic label level and the true-size floor both read the zoom
+  if (S.img && Math.abs(old - zoom) > 1e-9) scheduleRender();
 }
 function zoomFit() {
   if (!S.img) return;
@@ -1877,14 +2385,55 @@ function unitFoot(n) {
     rot: parseFloat(n.rot) || 0,
   };
 }
+/* True size is the default: a unit is the size it is at every zoom, in 3D and
+   on both report plates, so a 600 cassette never grows to cover a room when
+   the drawing is zoomed out and the plan can be read against the grid. Turn
+   it off in Job & defaults to get the legibility minimum back. */
+function trueSizeOn() { return S.settings.trueSize !== false; }
+
+/* ---------- how much is written on the plan ----------
+   Zoomed out over a whole floor at true size, the names, duties, flows and
+   velocities pile on top of each other and the plan cannot be read. The
+   level is 2 for everything, 1 for names and lengths only, 0 for nothing but
+   the warnings. `auto` drops to 1 below about 22 px to the metre on screen.
+   Exports always get everything — the plate is drawn at a fixed zoom. */
+let exporting = false;
+function labelLevel() {
+  if (exporting) return 2;
+  const m = S.settings.labels || 'auto';
+  if (m === 'all') return 2;
+  if (m === 'none') return 0;
+  return (S.pxPerM > 0 && S.pxPerM * zoom < 22) ? 1 : 2;
+}
+const LABEL_MODES = [
+  { key: 'auto', short: 'Aa', title: 'Labels: automatic — names and lengths only when zoomed out (click to show all)' },
+  { key: 'all',  short: 'AA', title: 'Labels: everything at every zoom (click to hide)' },
+  { key: 'none', short: '—',  title: 'Labels: hidden, warnings only (click for automatic)' },
+];
+function cycleLabels() {
+  const i = LABEL_MODES.findIndex(x => x.key === (S.settings.labels || 'auto'));
+  S.settings.labels = LABEL_MODES[(i + 1) % LABEL_MODES.length].key;
+  refreshLabelBtn();
+  render();
+  toast(LABEL_MODES.find(x => x.key === S.settings.labels).title.split(' (')[0]);
+}
+function refreshLabelBtn() {
+  const b = el('zLbl');
+  if (!b) return;
+  const m = LABEL_MODES.find(x => x.key === (S.settings.labels || 'auto')) || LABEL_MODES[0];
+  b.textContent = m.short;
+  b.title = m.title;
+}
 function unitBox(n, k) {
   const f0 = unitFoot(n);
   const def = f0.def;
   if (!def) return { w: 10 * k, d: 10 * k, def: null, rot: 0, foot: f0 };
   if (!(S.pxPerM > 0)) return { w: 46 * k, d: 28 * k, def, rot: f0.rot, foot: f0 };
   const w = f0.w * S.pxPerM, d = f0.d * S.pxPerM;
-  // legible when zoomed out; aspect is never distorted, both sides scale
-  const f = Math.max(1, (n.type === 'condenser' ? 46 : 38) * k / Math.max(w, d));
+  // legible when zoomed out; aspect is never distorted, both sides scale.
+  // At true size the only floor is a dot big enough to find with the cursor.
+  const minPx = trueSizeOn() ? 7 : (n.type === 'condenser' ? 46 : 38);
+  const f = Math.max(1, minPx * k / Math.max(w, d));
   return { w: w * f, d: d * f, def, rot: f0.rot, foot: f0 };
 }
 /* ---------- where the pipe actually lands on a unit ----------
@@ -2026,10 +2575,19 @@ function handlesOf(n, k) {
     fromLocal(n, { x: 0, y: -hd - ROT_ARM_PX * k }, b.rot)));
   return out;
 }
+/* A box drawn smaller than this on screen has no room for handles — they
+   would sit on top of each other and steal the click meant to move it.
+   Zoom in to resize a small unit. */
+const HANDLE_MIN_PX = 22;
+function handlesUsable(n) {
+  const b = unitBox(n, 1 / zoom);
+  return b.w * zoom >= HANDLE_MIN_PX && b.d * zoom >= HANDLE_MIN_PX;
+}
 function hitHandle(p) {
   if (tool !== 'select' || !sel || sel.kind !== 'node') return null;
   const n = nodeById(sel.id);
   if (!n || n.type === 'branch' || n.type === 'djoint') return null;
+  if (!handlesUsable(n)) return null;
   const k = 1 / zoom;
   const tol = (HANDLE_PX + 4) * k;
   let best = null;
@@ -2216,7 +2774,7 @@ function pathOf(pts) { return pts.map((p, i) => (i ? 'L' : 'M') + p.x + ' ' + p.
 function drawMeasure(g, m, k, live) {
   const pts = m.pts;
   if (!pts || pts.length < 2) return;
-  const picked = !live && sel && sel.kind === 'tape' && sel.id === m.id;
+  const picked = !live && isSel('tape', m.id);
   const ink = 'var(--measure)';
   if (picked) {
     g.appendChild(mk('path', { d: pathOf(pts), fill: 'none', stroke: ink,
@@ -2383,6 +2941,11 @@ function render() {
   // ---- units ----
   S.nodes.forEach(n => drawNode(g, n, k));
 
+  /* ---- the free end of the selected duct ----
+     After the units, because that end usually sits on an outlet and the
+     handle has to be seen over its box to be grabbed. */
+  drawRunEndHandle(g, k);
+
   /* ---- connection points ----
      Drawn after the units, because the box would otherwise cover them. Only
      where the pipe lands somewhere other than the centre, so a drawing is
@@ -2402,6 +2965,14 @@ function render() {
      third network, and they have to stay readable over the pipework. */
   (S.measures || []).forEach(m => drawMeasure(g, m, k, false));
 
+  // ---- the lasso ----
+  if (marquee && marquee.moved) {
+    const x = Math.min(marquee.x0, marquee.x1), y = Math.min(marquee.y0, marquee.y1);
+    g.appendChild(mk('rect', { x, y, width: Math.abs(marquee.x1 - marquee.x0),
+      height: Math.abs(marquee.y1 - marquee.y0), fill: 'rgba(108,122,224,.10)',
+      stroke: 'var(--measure)', 'stroke-width': 1.3 * k, 'stroke-dasharray': (5 * k) + ' ' + (3 * k) }));
+  }
+
   ov.innerHTML = '';
   ov.appendChild(g);
   const hb = el('hint');
@@ -2414,7 +2985,7 @@ function render() {
 
 /* ---------- one pipe section ---------- */
 function drawSeg(g, sg, k) {
-  const picked = sel && sel.kind === 'seg' && sel.id === sg.id;
+  const picked = isSel('seg', sg.id);
   const pts = sg.pts;
   if (!pts || pts.length < 2) return;
   const keys = linesFor(sg.pipes || 2);
@@ -2469,7 +3040,8 @@ function drawSeg(g, sg, k) {
   }
 
   // ---- label on the longest leg ----
-  if (S.pxPerM > 0) {
+  const lv = labelLevel();
+  if (S.pxPerM > 0 && lv > 0) {
     let bi = 1, bl = -1;
     for (let i = 1; i < pts.length; i++) {
       const L = dist(pts[i - 1], pts[i]);
@@ -2478,7 +3050,7 @@ function drawSeg(g, sg, k) {
     const a = pts[bi - 1], b = pts[bi];
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
     const hs = heightsOf(sg);
-    const hTxt = S.settings.showHeights === false ? ''
+    const hTxt = (S.settings.showHeights === false || lv < 2) ? ''
       : '  @' + (Math.abs(hs[bi] - hs[bi - 1]) < 0.005 ? fmt(hs[bi], 2) : fmt(hs[bi - 1], 2) + '/' + fmt(hs[bi], 2)) + 'm';
     const txt = segName(sg) + '  ' + fmt(sg.lengthM, 1) + ' m' + hTxt;
     const wPx = txt.length * 5.9 + 20;
@@ -2506,9 +3078,10 @@ function drawPipeJoins(g, k) {
   const off = pipeOffsetDraw(k);
   const base = 2.1;
   const reach = Math.max(off * 4, 10 * k);
+  const adj = adjacencyOf(S.segs);
   S.nodes.forEach(n => {
     if (n.type !== 'branch') return;
-    const segs = neighbours(n.id);
+    const segs = adj[n.id] || [];
     if (segs.length < 2) return;
     const arms = [];
     segs.forEach(sg => {
@@ -2549,16 +3122,35 @@ function drawPipeJoins(g, k) {
    Drawn as a band rather than a line, because a duct is a big thing on a
    ceiling plan and reads wrongly as a pipe. A sock is drawn dashed along its
    length, which is what it looks like and what it does. */
+/* The width of a duct across the plan in metres — the diameter of a round
+   one, the width of a rectangular one — and its depth, for the 3D box. */
+function ductWidthM(d) {
+  if (!d) return 0;
+  if (d.shape === 'rect') return (parseFloat(d.w) || 0) / 1000;
+  return (parseFloat(d.dia) || 0) / 1000;
+}
+function ductDepthM(d) {
+  if (!d) return 0;
+  if (d.shape === 'rect') return (parseFloat(d.h) || 0) / 1000;
+  return (parseFloat(d.dia) || 0) / 1000;
+}
+function ductBandPx(d, k) {
+  if (!(S.pxPerM > 0)) return 5 * k;
+  if (trueSizeOn()) {
+    const w = ductWidthM(d) * S.pxPerM;
+    // an unsized duct has no width to draw, so it is a line until it is sized
+    return w > 0 ? Math.max(w, 1.5 * k) : 5 * k;
+  }
+  return d.area > 0 ? clamp(Math.sqrt(d.area) * S.pxPerM, 3 * k, 26 * k) : 5 * k;
+}
 function drawDuct(g, d, k) {
-  const picked = sel && sel.kind === 'duct' && sel.id === d.id;
+  const picked = isSel('duct', d.id);
   const pts = d.pts;
   if (!pts || pts.length < 2) return;
   const col = ductKindDef(d).colour;
   const path = pathOf(pts);
   // a band whose width follows the duct size once one has been given
-  const wPx = d.area > 0 && S.pxPerM > 0
-    ? clamp(Math.sqrt(d.area) * S.pxPerM, 3 * k, 26 * k)
-    : 5 * k;
+  const wPx = ductBandPx(d, k);
 
   if (picked) {
     g.appendChild(mk('path', { d: path, fill: 'none', stroke: 'var(--measure)',
@@ -2585,7 +3177,8 @@ function drawDuct(g, d, k) {
     }
   }
 
-  if (S.pxPerM > 0) {
+  const lv = labelLevel();
+  if (S.pxPerM > 0 && lv > 0) {
     let bi = 1, bl = -1;
     for (let i = 1; i < pts.length; i++) {
       const L = dist(pts[i - 1], pts[i]);
@@ -2593,9 +3186,9 @@ function drawDuct(g, d, k) {
     }
     const a = pts[bi - 1], b = pts[bi];
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-    const bits = [segName(d), fmt(d.flow || 0, 0) + ' l/s'];
-    if (d.vel > 0.01) bits.push(fmt(d.vel, 1) + ' m/s');
-    const size = ductSizeLabel(d);
+    const bits = lv < 2 ? [segName(d), fmt(d.lengthM || 0, 1) + ' m'] : [segName(d), fmt(d.flow || 0, 0) + ' l/s'];
+    if (lv >= 2 && d.vel > 0.01) bits.push(fmt(d.vel, 1) + ' m/s');
+    const size = lv >= 2 ? ductSizeLabel(d) : '';
     if (size) bits.push(size);
     const txt = bits.join('  ');
     const wLbl = txt.length * 5.9 + 12;
@@ -2753,7 +3346,7 @@ function drawUnitGlyph(g, sym, x, y, w, h, colour, k) {
 }
 
 function drawNode(g, n, k) {
-  const picked = sel && sel.kind === 'node' && sel.id === n.id;
+  const picked = isSel('node', n.id);
 
   if (n.type === 'branch' || n.type === 'djoint') {
     const duct = n.type === 'djoint';
@@ -2781,7 +3374,7 @@ function drawNode(g, n, k) {
       g.appendChild(mk('circle', { cx: n.x, cy: n.y, r, fill: 'var(--white)',
         stroke: ink, 'stroke-width': 2 * k }));
     }
-    if (S.settings.showHeights !== false) {
+    if (S.settings.showHeights !== false && labelLevel() >= 2) {
       g.appendChild(mk('text', { x: n.x, y: n.y - 9 * k, 'text-anchor': 'middle',
         'font-size': 8 * k, 'font-family': 'Azeret Mono, monospace',
         fill: 'var(--ink-soft)' }, fmt(heightOf(n), 2) + 'm'));
@@ -2827,13 +3420,14 @@ function drawNode(g, n, k) {
     b.w * 0.9, b.d * 0.9, cond ? '#8e97a6' : edge, k);
   g.appendChild(gg);
 
-  if (picked && tool === 'select') drawHandles(g, n, k, b);
+  if (picked && tool === 'select' && sel.kind === 'node' && handlesUsable(n)) drawHandles(g, n, k, b);
 
   // ---- the name above, the duty and type below ----
+  const lv = labelLevel();
   const yTop = -half.y, yBot = half.y;
   const nameY = n.y + yTop - 5 * k;
   const nm = String(n.name || '');
-  if (nm) {
+  if (nm && lv > 0) {
     const wPx = nm.length * 5.6 + 8;
     g.appendChild(mk('rect', { x: n.x - wPx / 2 * k, y: nameY - 9.5 * k, width: wPx * k, height: 13 * k,
       rx: 1.5 * k, fill: 'rgba(255,255,255,.90)' }));
@@ -2870,7 +3464,7 @@ function drawNode(g, n, k) {
     if ((n.serves || []).length) bits.push(plural(n.serves.length, 'unit'));
   }
   if (S.settings.showHeights !== false) bits.push(fmt(heightOf(n), 2) + ' m');
-  if (bits.length) {
+  if (bits.length && lv >= 2) {
     const t = bits.join('  ');
     const wPx = t.length * 5.0 + 8;
     g.appendChild(mk('rect', { x: n.x - wPx / 2 * k, y: n.y + yBot + 1.5 * k, width: wPx * k, height: 12 * k,
@@ -2951,7 +3545,7 @@ function drawPlaceGhost(g, k) {
 }
 
 function drawSnap(g, k, net) {
-  const sn = snapAt(hoverPt, draft ? draft.startNode : null, net);
+  const sn = draft ? draftEndSnap(hoverPt) : snapAt(hoverPt, null, net);
   if (!sn) return;
   g.appendChild(mk('circle', { cx: sn.at.x, cy: sn.at.y, r: 10 * k, fill: 'none',
     stroke: 'var(--measure)', 'stroke-width': 2 * k }));
@@ -3062,8 +3656,9 @@ const HINTS = {
   condenser: 'Pick the system type, then click where the condenser sits.',
   indoor: 'Pick the unit type, then click where it sits. Select it afterwards to drag it to size.',
   bc: 'Pick the box, then click where it sits.',
-  select: 'Drag a selected unit’s corners to resize it, or the arm above it to turn it. '
-       + '<kbd>Shift</kbd> keeps its shape, or snaps the angle to 15°.',
+  select: 'Drag on open paper to lasso several things; <kbd>Shift</kbd>-click adds one. Drag any of them to '
+       + 'move the lot (<kbd>Shift</kbd> steps by the grid), arrows nudge, <kbd>Ctrl</kbd>+<kbd>D</kbd> copies, '
+       + '<kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> carries them to another sheet. <kbd>?</kbd> for help.',
   trace: 'Click along the route. Change the height before a click to start a riser. Finish anywhere on a '
        + 'unit &mdash; the pipe connects where you click it &mdash; or <b>double-click</b> to stop in mid-air. '
        + '<kbd>Alt</kbd> frees one corner, or branches into a run already traced.',
@@ -3112,6 +3707,8 @@ function setTool(t) {
   const pal = ['indoor', 'bc', 'condenser', 'outlet', 'duct', 'ctl', 'hrv'].indexOf(t) >= 0;
   el('vpal').classList.toggle('on', pal);
   if (pal) buildPalette();
+  // the help pane marks the tips for the armed tool
+  if (el('helpPane').classList.contains('on')) renderHelp();
   render();
 }
 
@@ -3337,14 +3934,14 @@ function addHeater(p) {
   }
   const hd = hitSeg(p, 18, 'duct');
   if (hd) {
-    pushUndo('put a heater on ' + segName(hd.seg));
-    undoSuspended = true;
-    const j = splitSegment(hd.seg, hd.r, 'duct');
-    j.type = 'heater';
-    j.name = nextName('HTR');
-    j.model = ''; j.kw = 0;
-    undoSuspended = false; refreshUndoBtn();
-    if (S.settings.autoName !== false) autoNameDucts(true);
+    const j = asOneUndo('put a heater on ' + segName(hd.seg), () => {
+      const jj = splitSegment(hd.seg, hd.r, 'duct');
+      jj.type = 'heater';
+      jj.name = nextName('HTR');
+      jj.model = ''; jj.kw = 0;
+      if (S.settings.autoName !== false) autoNameDucts(true);
+      return jj;
+    });
     select('node', j.id);
     render();
     toast('Heater on ' + segName(hd.seg));
@@ -3367,9 +3964,63 @@ function addController(p) {
   render();
 }
 
+/* ---------- where a run starts ----------
+   Nothing is put on the sheet when a trace begins. The start is remembered as
+   a snap — a unit already there, a corner or a point along a run, or a bare
+   point on the paper — and only when the run is finished is the joint made or
+   the run cut. It used to be done at the first click, so starting a duct on a
+   run already drawn cut that run in two at once, and a click on open paper
+   dropped a T-piece; abandon the trace and both were left behind. That is
+   what "click off it and it adds another section" was. */
+function realiseStart() {
+  if (!draft) return null;
+  if (draft.startNode != null) return nodeById(draft.startNode);
+  const p0 = draft.pts[0];
+  const net = draft.net || (draft.kind === 'duct' ? 'duct' : 'pipe');
+  // looked up again now rather than trusted from the first click, in case the
+  // run it sat on has been squared or slid since
+  let sn = snapAt(p0, null, net);
+  if (!sn || dist(sn.at, p0) > 0.5) sn = draft.startSnap || null;
+  let node = null;
+  if (sn) { const c = connectAt(sn); node = c ? c.node : null; if (c) draft.startOff = c.off || null; }
+  if (!node) {
+    node = { id: nid(), type: net === 'duct' ? 'djoint' : 'branch', x: p0.x, y: p0.y,
+             height: p0.h !== undefined ? p0.h : activeHeight() };
+    S.nodes.push(node);
+    draft.startOff = null;
+  }
+  draft.startNode = node.id;
+  return node;
+}
+/* Would a run finishing at `at` be long enough to keep? Asked before anything
+   is cut or made, so a too-short click leaves the sheet as it was. */
+function draftLongEnough(at) {
+  const pts = dedupePts(at ? draft.pts.concat([{ x: at.x, y: at.y }]) : draft.pts);
+  return pts.length >= 2 && polyLenPx(pts) >= stubPx() * 0.5;
+}
+/* Finish the run on whatever is under the click. The start is made first, the
+   end snap is looked up again afterwards — cutting the start into a run moves
+   that run's points — and the whole thing is one undo step. */
+function finishDraftAt(p) {
+  if (!draft) return false;
+  const sn0 = draftEndSnap(p);
+  if (!sn0) return false;
+  const duct = (draft.net || draft.kind) === 'duct';
+  if (!draftLongEnough(sn0.at)) { toast(duct ? 'Too short to be a duct' : 'Too short to be a section'); return true; }
+  asOneUndo(duct ? 'trace a duct' : 'trace a section', () => {
+    realiseStart();
+    const sn = draftEndSnap(p) || sn0;
+    const c = connectAt(sn);
+    if (!c || c.node.id === draft.startNode) { draft = null; toast('That finishes where it started'); return; }
+    draft.pts.push({ x: c.at.x, y: c.at.y, h: activeHeight() });
+    if (duct) finishDuct(c.node.id, c.off); else finishTrace(c.node.id, c.off);
+  });
+  render();
+  return true;
+}
+
 function finishDuct(endNode, endOff) {
   if (!draft || draft.pts.length < 2) { draft = null; render(); return; }
-  pushUndo('trace a duct');
   const pts = dedupePts(draft.pts);
   if (pts.length < 2 || polyLenPx(pts) < stubPx() * 0.5) {
     draft = null; toast('Too short to be a duct'); render(); return;
@@ -3400,11 +4051,12 @@ function autoNameDucts(quiet) {
     d.ref = name;
     (runs[name] = runs[name] || []).push(d);
   };
+  const outsBy = groupBy(S.ducts.filter(d => !d.orphan), 'up');
   const walkKind = (nodeId, runName, level, kind, nextMain, nextBr) => {
     const seenKey = nodeId + ':' + kind;
     if (walkKind.seen[seenKey]) return;
     walkKind.seen[seenKey] = true;
-    const outs = S.ducts.filter(d => d.up === nodeId && !d.orphan && ductKindOf(d) === kind);
+    const outs = (outsBy[nodeId] || []).filter(d => ductKindOf(d) === kind);
     outs.sort((x, y) => (y.flow || 0) - (x.flow || 0));
     let sub = 0;
     outs.forEach((d, i) => {
@@ -3456,6 +4108,82 @@ function autoNameDucts(quiet) {
 function heightAlong(sg, legIndex, tLeg) {
   const h0 = vertexH(sg, legIndex - 1), h1 = vertexH(sg, legIndex);
   return h0 + (h1 - h0) * clamp(tLeg, 0, 1);
+}
+
+/* ---------- setting the length of a duct ----------
+   A duct is fed from one end — the unit, or the joint it leaves — and that
+   end is fixed. The other end is free when the only thing on it is this
+   duct's own outlet or joint, and it can then be dragged along the last leg
+   or given a plan length outright, which is how every run off a row of fan
+   coils is made the same length. An end that sits on a unit or on a joint
+   shared with another duct is not free: move the unit or the joint instead. */
+function isDuctRun(r) { return !!(r && r.kind); }
+function runFreeEnd(d) {
+  if (!d || !d.pts || d.pts.length < 2 || !(S.pxPerM > 0)) return null;
+  const lockedId = d.up != null ? d.up : d.a;
+  const endIsB = lockedId === d.a;
+  const n = nodeById(endIsB ? d.b : d.a);
+  if (!n) return null;
+  // a duct may end on its own outlet, joint or heater; a pipe only on a
+  // joint left in mid-air — anything else is a unit, and units are moved
+  const free = isDuctRun(d) ? ['djoint', 'outlet', 'heater'] : ['branch'];
+  if (free.indexOf(n.type) < 0) return null;
+  if (ductNeighbours(n.id).length + neighbours(n.id).length !== 1) return null;
+  const idx = endIsB ? d.pts.length - 1 : 0;
+  const prevIdx = endIsB ? d.pts.length - 2 : 1;
+  const end = d.pts[idx], prev = d.pts[prevIdx];
+  const L = dist(prev, end);
+  const dir = L > 0.5 ? { x: (end.x - prev.x) / L, y: (end.y - prev.y) / L } : { x: 1, y: 0 };
+  return { node: n, idx, prevIdx, end, prev, dir, legPx: L, othersPx: polyLenPx(d.pts) - L };
+}
+/* Put the free end at q and carry its outlet or joint with it. */
+function setRunEnd(d, fe, q) {
+  const dx = q.x - fe.end.x, dy = q.y - fe.end.y;
+  fe.end.x = q.x; fe.end.y = q.y;
+  fe.node.x += dx; fe.node.y += dy;
+}
+function setRunPlanLength(d, metres) {
+  const fe = runFreeEnd(d);
+  if (!fe) return false;
+  const legPx = metres * S.pxPerM - fe.othersPx;
+  if (legPx < stubPx() * 0.5) {
+    toast('Shorter than the rest of the run already is — drop a corner first, or move the outlet');
+    return false;
+  }
+  setRunEnd(d, fe, { x: fe.prev.x + fe.dir.x * legPx, y: fe.prev.y + fe.dir.y * legPx });
+  return true;
+}
+const RUN_END_PX = 6.5;
+function selectedResizableRun() {
+  if (tool !== 'select' || !sel || (sel.kind !== 'duct' && sel.kind !== 'seg')) return null;
+  return sel.kind === 'duct' ? ductById(sel.id) : segById(sel.id);
+}
+function hitRunEnd(p) {
+  const d = selectedResizableRun();
+  const fe = runFreeEnd(d);
+  if (!fe) return null;
+  return dist(fe.end, p) <= (RUN_END_PX + 5) / zoom ? { duct: d, fe } : null;
+}
+function drawRunEndHandle(g, k) {
+  const d = selectedResizableRun();
+  const fe = runFreeEnd(d);
+  if (!fe) return;
+  const e = fe.end;
+  // the line it can slide along
+  const reach = 40 * k;
+  g.appendChild(mk('line', { x1: e.x - fe.dir.x * reach, y1: e.y - fe.dir.y * reach,
+    x2: e.x + fe.dir.x * reach, y2: e.y + fe.dir.y * reach,
+    stroke: 'var(--measure)', 'stroke-width': 1.2 * k, 'stroke-dasharray': (3 * k) + ' ' + (3 * k), opacity: .8 }));
+  g.appendChild(mk('rect', { x: e.x - RUN_END_PX * k, y: e.y - RUN_END_PX * k,
+    width: RUN_END_PX * 2 * k, height: RUN_END_PX * 2 * k, rx: 1.5 * k,
+    fill: 'var(--measure)', stroke: 'var(--white)', 'stroke-width': 1.8 * k }));
+  const t = fmt(polyLenPx(d.pts) / S.pxPerM, 2) + ' m on plan';
+  const wPx = t.length * 6.0 + 12;
+  g.appendChild(mk('rect', { x: e.x + 11 * k, y: e.y + 6 * k, width: wPx * k, height: 15 * k,
+    rx: 2 * k, fill: 'var(--measure)' }));
+  g.appendChild(mk('text', { x: e.x + 17 * k, y: e.y + 17 * k,
+    'font-size': 9.5 * k, 'font-family': 'Azeret Mono, monospace', 'font-weight': 600,
+    fill: '#fff' }, t));
 }
 
 /* Cut a section in two at a point along it and put a branch joint there. */
@@ -3627,8 +4355,20 @@ function orthoPoint(prev, p) {
   return { x: prev.x + (dx < 0 ? -m : m), y: prev.y + (dy < 0 ? -m : m) };
 }
 
+/* What a click at p would finish on, while a run is being traced. The start
+   is skipped — whether it is a unit already there or a joint not yet cut —
+   or a finish near the plant snaps back to where the run began and the tool
+   looks as if it has died. */
+function draftEndSnap(p) {
+  if (!draft) return null;
+  const sn = snapAt(p, draft.startNode, draft.net || (draft.kind === 'duct' ? 'duct' : 'pipe'));
+  if (!sn) return null;
+  if (sn.kind === 'node' && sn.node.id === draft.startNode) return null;
+  if (draft.pts.length && dist(sn.at, draft.pts[0]) < 0.5) return null;
+  return sn;
+}
 function previewPoint(p) {
-  const sn = snapAt(p, draft ? draft.startNode : null, draft && draft.kind === 'duct' ? 'duct' : 'pipe');
+  const sn = draftEndSnap(p);
   if (sn) return { x: sn.at.x, y: sn.at.y, h: activeHeight() };
   const prev = draft && draft.pts.length ? draft.pts[draft.pts.length - 1] : null;
   const q = orthoPoint(prev, p);
@@ -3653,7 +4393,6 @@ function ductTraceHeight() { return ductHeight; }
 
 function finishTrace(endNode, endOff) {
   if (!draft || draft.pts.length < 2) { draft = null; render(); return; }
-  pushUndo('trace a section');
   const pts = dedupePts(draft.pts);
   if (pts.length < 2 || polyLenPx(pts) < stubPx() * 0.5) {
     draft = null; toast('Too short to be a section'); render(); return;
@@ -3680,6 +4419,7 @@ function finishTrace(endNode, endOff) {
    ========================================================================== */
 function deleteSelected() {
   if (!sel) return;
+  if (sel.kind === 'multi') { deleteMulti(); return; }
   if (sel.kind === 'calib') {
     hideScaleMark();
     return;
@@ -3864,7 +4604,11 @@ function openInspector() {
   } else if (sel.kind === 'calib') {
     if (!S.calib) { closeInspector(); return; }
     kind = 'Scale mark'; name = fmt(S.calib.metres, 2) + ' m'; html = calibForm();
+  } else if (sel.kind === 'multi') {
+    if (!multiCount(sel)) { closeInspector(); return; }
+    kind = 'Selection'; name = plural(multiCount(sel), 'thing') + ' selected'; html = multiForm(sel);
   }
+  if (sel.kind !== 'calib') html += selToolsHtml();
   el('insKind').textContent = kind;
   el('insName').textContent = name;
   el('insBody').innerHTML = html;
@@ -4305,12 +5049,28 @@ function ductForm(d) {
     + '<button class="btn ghost sm" id="fDLevel">Level the whole run</button>'
     + '<button class="btn ghost sm" id="fDSetAll">Set all to…</button></div></div>';
 
+  /* The plan length, typed. The fed end stays where it is and the far end
+     slides along the last leg, so a row of fan coils can be given runs of
+     exactly the same length. */
+  const fe = runFreeEnd(d);
+  html += '<div class="fld"><span>Plan length <em>metres on the drawing — the fed end stays put</em></span>'
+    + '<div class="row2">'
+    + '<input type="number" id="fDLen" step="0.05" min="0.05" value="' + fmt(d.routeM || ductLenM(d), 2) + '"'
+    + (fe ? '' : ' disabled') + ' title="' + (fe ? 'Type a length and the far end moves to it' : 'Both ends are fixed') + '">'
+    + '<span style="font-size:11.5px;color:var(--ink-soft);align-self:center">'
+    + (fe ? 'moves ' + esc(fe.node.name || nodeWord(fe.node)) + ' with it'
+          : 'both ends sit on something — move the unit or joint instead')
+    + '</span></div>'
+    + (fe ? '<div class="note">Or drag the square handle on the far end along the run. Hold <b>Shift</b> to step in 50 mm.</div>' : '')
+    + '</div>';
+
   html += '<label class="fld"><span>Note</span><textarea id="fDNote">' + esc(d.note || '') + '</textarea></label>';
 
   const rows = [
-    ['From', esc(up ? (up.name || nodeWord(up)) : '—')],
+    ['From', esc(up ? (up.name || nodeWord(up)) : '—') + (fe ? ' <span style="color:var(--muted)">fixed</span>' : '')],
     ['To', esc(dn ? (dn.name || nodeWord(dn)) : '—')],
-    ['Length', fmt(d.lengthM || 0, 2) + ' m'],
+    ['Length', fmt(d.lengthM || 0, 2) + ' m' + (d.riseM > 0.005 ? ' <span style="color:var(--muted)">incl. ' + fmt(d.riseM, 2) + ' m rise</span>' : '')],
+    ['Fittings', esc(fittingsText(d.fittings))],
     ['<b>Carries</b>', '<b>' + bothAir(d.flow || 0) + '</b>'],
   ];
   if (d.area > 0) {
@@ -4336,6 +5096,44 @@ function ductForm(d) {
       + fmt(VEL_DUCT_HI, 1) + ' m/s (the size helper aims at '
       + fmt(S.settings.ductVel, 1) + ').</div>';
   return html + rowBtns(false);
+}
+
+/* ---------- moving and copying what is selected ----------
+   The same block under every selection: a typed move, so a row of units can
+   be set out at an exact pitch, and the clipboard, which is how a floor's
+   set-out is carried on to the next sheet. */
+function selToolsHtml() {
+  const clip = clipboardRead();
+  return '<div class="fld" style="margin-top:14px"><span>Move by <em>metres — right and down are positive</em></span>'
+    + '<div class="row3">'
+    + '<input type="number" id="fMvX" step="0.05" value="0" title="Metres to the right (negative for left)">'
+    + '<input type="number" id="fMvY" step="0.05" value="0" title="Metres down (negative for up)">'
+    + '<button class="btn ghost sm" id="fMvGo" type="button">Move</button></div>'
+    + '<div class="note">Arrow keys nudge what is selected by 50 mm, <b>Shift</b> + arrow by 0.5 m. '
+    + 'Hold <b>Shift</b> while dragging to step by the ceiling grid ('
+    + fmt(S.settings.gridM || 0.6, 2) + ' m, set in Job &amp; defaults).</div></div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    + '<button class="btn ghost sm" id="fCopy" type="button" title="Copy what is selected to the clipboard (Ctrl+C) — it survives a change of layout">Copy</button>'
+    + (clip ? '<button class="btn ghost sm" id="fPaste" type="button" title="Paste the clipboard at the last cursor position (Ctrl+V)">Paste '
+        + esc(clipSummary(clip)) + '</button>' : '')
+    + '</div>';
+}
+
+/* ---------- several things at once ---------- */
+function multiForm(m) {
+  const box = selectionBox();
+  const rows = [['Selected', esc(multiSummary(m))]];
+  if (box && S.pxPerM > 0) rows.push(['Extent', fmt(box.w / S.pxPerM, 2) + ' × ' + fmt(box.h / S.pxPerM, 2) + ' m']);
+  const named = m.nodes.map(nodeById).filter(n => n && n.name).map(n => esc(n.name));
+  if (named.length) rows.push(['Units', named.slice(0, 12).join(', ') + (named.length > 12 ? ' …' : '')]);
+  return derivedBox(rows)
+    + '<div class="note">Drag any selected thing to move the lot. Runs whose other end was not '
+    + 'selected are stretched to keep up. <b>Shift</b>-click adds one or takes one out; '
+    + '<b>Esc</b> clears the selection.</div>'
+    + '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">'
+    + '<button class="btn go sm" id="fDupSel" title="Copy everything selected and set it down beside the original (Ctrl+D)">Duplicate</button>'
+    + '<div style="flex:1"></div>'
+    + '<button class="btn ghost sm" id="fDel" style="color:var(--alarm)">Delete</button></div>';
 }
 
 /* ---------- branch joint ---------- */
@@ -4454,6 +5252,17 @@ function segForm(sg) {
   html += '<label class="fld"><span>Extra rise over an obstruction <em>metres, counted up and back down</em></span>'
     + '<input type="number" id="fExtra" step="0.1" value="' + (sg.extraRise || 0) + '"></label>';
 
+  /* The plan length, typed, when the far end is a joint in mid-air. The fed
+     end stays put and the far end slides along the last leg. */
+  const fe = runFreeEnd(sg);
+  if (fe) {
+    html += '<div class="fld"><span>Plan length <em>metres on the drawing — the fed end stays put</em></span>'
+      + '<div class="row2">'
+      + '<input type="number" id="fSLen" step="0.05" min="0.05" value="' + fmt(sg.routeM || 0, 2) + '" title="Type a length and the far end moves to it">'
+      + '<span style="font-size:11.5px;color:var(--ink-soft);align-self:center">moves the joint on the end with it</span></div>'
+      + '<div class="note">Or drag the square handle on the far end along the run. Hold <b>Shift</b> to step in 50 mm.</div></div>';
+  }
+
   html += '<div class="fld"><span>Line sizes <em>from the manufacturer’s selection</em></span>'
     + '<div class="' + (keys.length === 3 ? 'row3' : 'row2') + '">'
     + keys.map(kk => sizeSelect('fSize_' + kk, sg[SIZE_FIELD[kk]], LINES[kk].label)).join('')
@@ -4483,6 +5292,7 @@ function segForm(sg) {
   if (r.extra > 0.005) rows.push(['Over the obstruction', fmt(r.extra, 2) + ' m']);
   rows.push(['<b>One direction</b>', '<b>' + fmt(sg.lengthM, 2) + ' m</b>']);
   rows.push(['Pipe metres', fmt(sg.pipeM, 2) + ' m  (× ' + sg.pipes + ')']);
+  rows.push(['Fittings', esc(fittingsText(sg.fittings))]);
   const ins = insulationOf(sg);
   if (ins !== 'none') rows.push(['Insulation', fmt(sg.pipeM, 2) + ' m of ' + INSULATION[ins].label]);
   if (sg.nIndoor) rows.push(['Carries', plural(sg.nIndoor, 'indoor unit') + ', ' + fmt(sg.kw, 1) + ' kW']);
@@ -4714,6 +5524,13 @@ function wireInspector() {
       pushUndo('size a duct');
       d.shape = 'circ'; d.dia = suggestDia(d.flow, S.settings.ductVel); redo();
     });
+    on('fDLen', 'change', e => {
+      const v = parseFloat(e.target.value);
+      if (!(v > 0)) { toast('Enter a length greater than zero'); return; }
+      pushUndo('set the length of ' + segName(d));
+      if (setRunPlanLength(d, v)) toast(segName(d) + ' set to ' + fmt(v, 2) + ' m on plan');
+      redo();
+    });
     on('fDOut', 'change', e => { pushUndo('set outlets'); d.outlets = parseInt(e.target.value, 10) || 0; redo(); });
     on('fDOutLps', 'change', e => { pushUndo('set an air volume'); d.outletLps = airToLps(e.target.value); redo(); });
     on('fDSock', 'change', e => {
@@ -4767,20 +5584,28 @@ function wireInspector() {
   }
 
   on('fDel', 'click', deleteSelected);
-  on('fDup', 'click', () => {
-    if (!n) return;
-    pushUndo('duplicate ' + (n.name || 'unit'));
-    const c = JSON.parse(JSON.stringify(n));
-    c.id = nid();
-    const b = unitBox(n, 1 / zoom);
-    c.x = n.x + b.w * 1.25; c.y = n.y;
-    c.name = nextName(n.type === 'condenser' ? 'CU' : n.type === 'indoor' ? 'IU'
-      : n.type === 'hrv' ? 'HRV' : n.type === 'heater' ? 'HTR'
-      : n.type === 'outlet' ? (DUCT_KINDS[ductKindOf(n)].short) : 'BC');
-    delete c.reached; delete c.sysId; delete c.depth;
-    S.nodes.push(c);
-    select('node', c.id);
+  on('fDup', 'click', duplicateSelection);
+  on('fDupSel', 'click', duplicateSelection);
+  on('fCopy', 'click', copySelection);
+  on('fPaste', 'click', () => pasteClipboard());
+  on('fMvGo', 'click', () => {
+    const mx = parseFloat(el('fMvX').value) || 0, my = parseFloat(el('fMvY').value) || 0;
+    if (!mx && !my) { toast('Enter a distance to move by'); return; }
+    if (!(S.pxPerM > 0)) { toast('Set the scale first'); return; }
+    pushUndo('move ' + multiSummary(selAsMulti()));
+    moveSelection(mx * S.pxPerM, my * S.pxPerM);
+    render(); openInspector();
+    toast('Moved ' + fmt(mx, 2) + ' m across, ' + fmt(my, 2) + ' m down');
   });
+  if (sg) {
+    on('fSLen', 'change', e => {
+      const v = parseFloat(e.target.value);
+      if (!(v > 0)) { toast('Enter a length greater than zero'); return; }
+      pushUndo('set the length of ' + segName(sg));
+      if (setRunPlanLength(sg, v)) toast(segName(sg) + ' set to ' + fmt(v, 2) + ' m on plan');
+      render(); openInspector();
+    });
+  }
 
   /* Number inputs must not respond to the scroll wheel — scrolling a page
      was silently changing design figures. */
@@ -5205,6 +6030,7 @@ function renderPipeSchedule() {
     + '<th class="n">One way<i>plan + rise</i></th>'
     + '<th class="n">Pipe<i>× pipes</i></th>'
     + '<th class="n">Height<i>m aff</i></th>'
+    + '<th class="n">Bends<i>elbows</i></th>'
     + '<th>Liquid</th><th>Gas</th><th>Units</th>'
     + '</tr></thead><tbody>';
 
@@ -5216,7 +6042,7 @@ function renderPipeSchedule() {
 
   groups.forEach(gr => {
     if (!gr.segs.length) return;
-    html += '<tr class="grp"><td colspan="12">' + esc(gr.label) + '</td></tr>';
+    html += '<tr class="grp"><td colspan="13">' + esc(gr.label) + '</td></tr>';
     gr.segs.slice().sort((a, b) => String(a.ref).localeCompare(String(b.ref), 'en', { numeric: true }))
       .forEach(sg => {
         const up = nodeById(sg.up != null ? sg.up : sg.a);
@@ -5235,6 +6061,7 @@ function renderPipeSchedule() {
           + '<td class="n"><b>' + fmt(sg.lengthM, 2) + '</b></td>'
           + '<td class="n">' + fmt(sg.pipeM, 2) + '</td>'
           + '<td class="n dim">' + (Math.abs(hi - lo) < 0.005 ? fmt(hi, 2) : fmt(lo, 2) + '–' + fmt(hi, 2)) + '</td>'
+          + '<td class="n dim" title="' + esc(fittingsText(sg.fittings)) + '">' + (sg.fittings ? sg.fittings.elbows : 0) + '</td>'
           + '<td class="dim">' + esc(sizeLabel(sg.sizeLiquid) || '—') + '</td>'
           + '<td class="dim">' + esc(sizeLabel(sg.sizeGas) || '—') + '</td>'
           + '<td class="n dim">' + (sg.nIndoor || 0) + '</td>'
@@ -5248,7 +6075,9 @@ function renderPipeSchedule() {
     + '<td class="n">' + fmt(t.riseM, 2) + '</td>'
     + '<td class="n">' + fmt(t.lengthM, 2) + '</td>'
     + '<td class="n">' + fmt(t.pipeM, 2) + '</td>'
-    + '<td colspan="4"></td></tr></tfoot>';
+    + '<td></td>'
+    + '<td class="n">' + S.segs.reduce((x, s) => x + (s.fittings ? s.fittings.elbows : 0), 0) + '</td>'
+    + '<td colspan="3"></td></tr></tfoot>';
 
   el('schedTable').innerHTML = html;
   el('schedTable').querySelectorAll('[data-seg]').forEach(tr =>
@@ -5265,17 +6094,19 @@ function renderDuctSchedule() {
   let html = '<thead><tr><th>Section</th><th>Unit</th><th>Air</th><th>From</th><th>To</th>'
     + '<th class="n">Length<i>m</i></th><th class="n">Carries<i>l/s</i></th>'
     + '<th>Size<i>mm</i></th><th class="n">Velocity<i>m/s</i></th>'
-    + '<th class="n">Off it<i>l/s</i></th><th class="n">Outlets</th><th>Note</th></tr></thead><tbody>';
+    + '<th class="n">Off it<i>l/s</i></th><th class="n">Outlets</th>'
+    + '<th class="n">Bends<i>elbows</i></th><th>Note</th></tr></thead><tbody>';
 
   const groups = (S.ductSystems || []).map(x => ({ label: x.unit.name + (x.plant === 'hrv' ? ' — HRV' : '')
     + ' — ' + fmt(x.total, 0) + ' l/s at ' + x.speed + (x.pa ? ', ' + fmt(x.pa, 0) + ' Pa' : '')
-    + (x.openReturn ? ' · open return' : ''), ducts: x.ducts, x }));
+    + (x.openReturn ? ' · open return' : '')
+    + ' · ' + plural(x.tees || 0, 'T-piece') + ', ' + plural(x.elbows || 0, 'elbow'), ducts: x.ducts, x }));
   const loose = S.ducts.filter(d => d.orphan);
   if (loose.length) groups.push({ label: 'Not on a unit', ducts: loose, x: null });
 
   groups.forEach(gr => {
     if (!gr.ducts.length) return;
-    html += '<tr class="grp"><td colspan="12">' + esc(gr.label) + '</td></tr>';
+    html += '<tr class="grp"><td colspan="13">' + esc(gr.label) + '</td></tr>';
     gr.ducts.slice().sort((a, b) => String(a.ref).localeCompare(String(b.ref), 'en', { numeric: true }))
       .forEach(d => {
         const up = nodeById(d.up != null ? d.up : d.a);
@@ -5293,6 +6124,7 @@ function renderDuctSchedule() {
           + '<td class="n">' + (d.vel > 0.01 ? fmt(d.vel, 2) : '—') + '</td>'
           + '<td class="n">' + (d.takeOff > 0 ? fmt(d.takeOff, 0) : '') + '</td>'
           + '<td class="n dim">' + (d.nOutlets || '') + (d.sock ? ' sock' : '') + '</td>'
+          + '<td class="n dim" title="' + esc(fittingsText(d.fittings)) + '">' + (d.fittings ? d.fittings.elbows : 0) + '</td>'
           + '<td class="dim">' + esc(d.note || '') + '</td></tr>';
       });
   });
@@ -5300,7 +6132,7 @@ function renderDuctSchedule() {
   // the outlets themselves, which are where the air actually goes
   const outs = S.nodes.filter(n => n.type === 'outlet');
   if (outs.length) {
-    html += '<tr class="grp"><td colspan="12">Outlets</td></tr>';
+    html += '<tr class="grp"><td colspan="13">Outlets</td></tr>';
     outs.sort((a, b) => String(a.name).localeCompare(String(b.name), 'en', { numeric: true })).forEach(o => {
       const u = o.unitId ? nodeById(o.unitId) : null;
       const pick = sel && sel.kind === 'node' && sel.id === o.id ? ' pick' : '';
@@ -5313,7 +6145,7 @@ function renderDuctSchedule() {
         + '<td class="n"><b>' + fmt(o.flow || 0, 0) + '</b></td>'
         + '<td colspan="2" class="dim">' + (o.auto ? 'share' : 'set')
         + (o.faceVel > 0 ? ' · ' + fmt(o.faceVel, 1) + ' m/s face' : '') + '</td>'
-        + '<td class="n"></td><td class="n"></td>'
+        + '<td class="n"></td><td class="n"></td><td class="n"></td>'
         + '<td class="dim">' + esc(o.room || '') + '</td></tr>';
     });
   }
@@ -5627,22 +6459,45 @@ function build3D() {
     poly.forEach(p => { if (p.Z > zMax) zMax = p.Z; if (p.Z < zMin) zMin = p.Z; });
   });
 
-  // ---- ductwork, drawn as a single band under the pipework ----
+  /* Exaggerating the vertical stretches everything, boxes included, which
+     turns a condenser into a column. The boxes are pre-divided by it so they
+     keep their shape while their height off the floor is exaggerated. */
+  const zk = 1 / (V3.ex || 1);
+  const trueSize = trueSizeOn();
+
+  /* ---- ductwork ----
+     At true size a sized duct is a box of its real width and depth along
+     every level leg, the same figures the plan draws its band from; the
+     risers between legs stay as lines. An unsized duct, or the legibility
+     mode, is a band under the pipework. */
   S.ducts.forEach(d => {
     const poly = segPoly3D(d, W);
     if (poly.length < 2) return;
     const col = ductKindDef(d).colour;
-    items.push({ t: 'line', pts: poly, w: clamp(2 + (d.area > 0 ? Math.sqrt(d.area) * 9 : 1.5), 2, 9),
-      c: col, duct: d.id });
+    const wM = ductWidthM(d), hM = ductDepthM(d);
+    if (trueSize && wM > 0 && hM > 0) {
+      for (let i = 1; i < poly.length; i++) {
+        const a = poly[i - 1], b = poly[i];
+        const L = Math.hypot(b.X - a.X, b.Y - a.Y);
+        if (Math.abs(a.Z - b.Z) > 0.001 || L < 0.01) {
+          items.push({ t: 'line', pts: [a, b], w: 2, c: col, duct: d.id });
+          continue;
+        }
+        const c = { X: (a.X + b.X) / 2, Y: (a.Y + b.Y) / 2, Z: a.Z };
+        const rot = Math.atan2(b.Y - a.Y, b.X - a.X) * 180 / Math.PI;
+        cuboid3D(c, L, wM, hM * zk, col + '44', col, rot).forEach(f => items.push(f));
+      }
+      items.push({ t: 'line', pts: poly, w: 1.2, c: col, duct: d.id });
+    } else {
+      items.push({ t: 'line', pts: poly, w: clamp(2 + (d.area > 0 ? Math.sqrt(d.area) * 9 : 1.5), 2, 9),
+        c: col, duct: d.id });
+    }
+    if (d.orphan) items.push({ t: 'line', pts: poly, w: 1.4, c: '#bb3b2e', dash: [4, 4] });
     poly.forEach(p => { if (p.Z > zMax) zMax = p.Z; if (p.Z < zMin) zMin = p.Z; });
   });
 
   // ---- units ----
   const bs = bs0;
-  /* Exaggerating the vertical stretches everything, boxes included, which
-     turns a condenser into a column. The boxes are pre-divided by it so they
-     keep their shape while their height off the floor is exaggerated. */
-  const zk = 1 / (V3.ex || 1);
   S.nodes.forEach(n => {
     const z = heightOf(n);
     if (z > zMax) zMax = z;
@@ -5654,9 +6509,10 @@ function build3D() {
     if (Math.abs(z) > 0.01) items.push({ t: 'line', pts: [foot, c], w: 1.2, c: '#9c958a', dash: [3, 3] });
 
     if (n.type === 'branch' || n.type === 'djoint') {
-      cuboid3D(c, bs * 0.26, bs * 0.26, bs * 0.26 * zk, '#f4f2ec',
+      const jb = trueSize ? 0.16 : bs * 0.26;
+      cuboid3D(c, jb, jb, jb * zk, '#f4f2ec',
         n.type === 'djoint' ? DUCT_KINDS.sa.colour : '#4a5059').forEach(f => items.push(f));
-      if (V3.labels) labels.push({ at: { X: c.X, Y: c.Y, Z: c.Z + bs * 0.18 * zk },
+      if (V3.labels) labels.push({ at: { X: c.X, Y: c.Y, Z: c.Z + jb * 0.7 * zk },
         text: '', sub: fmt(z, 2) + ' m', small: true });
       return;
     }
@@ -5674,14 +6530,16 @@ function build3D() {
        otherwise be too small to see against the extent of the job. The box's
        vertical size is nominal: nothing here knows how deep a unit is. */
     const ft = unitFoot(n);
-    const grow = Math.max(1, bs * (cond ? 0.85 : 0.62) / Math.max(ft.w, ft.d));
+    // at true size nothing grows; otherwise a unit too small to see is scaled up
+    const grow = trueSize ? 1 : Math.max(1, bs * (cond ? 0.85 : 0.62) / Math.max(ft.w, ft.d));
     /* The box stands up off the type's nominal casing depth rather than a
        figure taken from the extent of the job, so a condenser looks like a
        condenser beside a cassette instead of both being the same slab. It is
        nominal — nothing here is told how deep a real unit is — and it is
        pre-divided by the exaggeration so stretching the vertical moves the
        unit's height off the floor without turning it into a column. */
-    const boxH = Math.max((ft.def && ft.def.t ? ft.def.t : 0.3) * grow, bs * 0.18);
+    const tNom = (ft.def && ft.def.t ? ft.def.t : 0.3);
+    const boxH = trueSize ? tNom : Math.max(tNom * grow, bs * 0.18);
     cuboid3D(c, ft.w * grow, ft.d * grow, boxH * zk, fill, stroke, ft.rot)
       .forEach(f => items.push(f));
     if (V3.labels) labels.push({
@@ -5901,7 +6759,8 @@ function planImage() {
     const savedZoom = zoom, savedSel = sel, savedHover = hoverPt;
     sel = null; hoverPt = null;
     zoom = clamp(1500 / S.img.w, 0.15, 2);
-    render();
+    exporting = true;
+    try { render(); } finally { exporting = false; }
 
     const css = getComputedStyle(document.documentElement);
     const vars = EXPORT_VARS.map(v => v + ':' + css.getPropertyValue(v).trim() + ';').join('');
@@ -6053,10 +6912,12 @@ async function buildReport() {
     { h: 'Pipes', n: true }, { h: 'Plan m', n: true }, { h: 'Rise m', n: true },
     { h: 'One way m', n: true, strong: true }, { h: 'Pipe m', n: true },
     { h: 'Height m', n: true },
+    { h: 'Bends', n: true, opt: true },
     { h: 'Liquid', n: true, opt: true }, { h: 'Gas', n: true, opt: true },
     { h: 'HP gas', n: true, opt: true }, { h: 'Insulation', opt: true },
     { h: 'Note', opt: true },
   ];
+  const bendCell = f => f && f.elbows ? String(f.elbows) + (f.risers ? ' (' + f.risers + ' riser' + (f.risers === 1 ? '' : 's') + ')' : '') : '';
   const sectionRow = sg => {
     const up = nodeById(sg.up != null ? sg.up : sg.a);
     const dn = nodeById(sg.down != null ? sg.down : sg.b);
@@ -6066,6 +6927,7 @@ async function buildReport() {
       up ? (up.name || nodeWord(up)) : '—', dn ? (dn.name || nodeWord(dn)) : '—',
       String(sg.pipes), fmt(sg.routeM, 2), fmt(sg.riseM, 2), fmt(sg.lengthM, 2), fmt(sg.pipeM, 2),
       (Math.abs(hi - lo) < 0.005 ? fmt(hi, 2) : fmt(lo, 2) + '–' + fmt(hi, 2)),
+      bendCell(sg.fittings),
       sizeLabel(sg.sizeLiquid), sizeLabel(sg.sizeGas),
       sg.pipes === 3 ? sizeLabel(sg.sizeHp) : '',
       insulationOf(sg) === (S.settings.insulation || '1/2') ? '' : INSULATION[insulationOf(sg)].label,
@@ -6388,6 +7250,7 @@ ${(S.ductSystems || []).filter(x => x.ducts.length || x.plant === 'hrv').map(x =
   + fig('Outlets', String(x.nOutlets))
   + fig('Delivered', fmt(x.delivered, 0) + ' l/s')
   + fig('Fastest duct', x.maxVel > 0 ? fmt(x.maxVel, 1) + ' m/s' : '—')
+  + fig('Fittings', plural(x.tees || 0, 'T-piece') + ', ' + plural(x.elbows || 0, 'elbow'))
   + (x.openReturn ? fig('Return', 'open at the unit') : '')
   + '</div>'
   + ((x.rooms || []).filter(r => r.room !== '(no room)').length
@@ -6399,7 +7262,7 @@ ${(S.ductSystems || []).filter(x => x.ducts.length || x.plant === 'hrv').map(x =
       { h: 'Length m', n: true }, { h: 'Carries l/s', n: true, strong: true },
       { h: 'Size mm', n: true, opt: true }, { h: 'Velocity m/s', n: true, opt: true },
       { h: 'Off it l/s', n: true, opt: true }, { h: 'Outlets', n: true, opt: true },
-      { h: 'l/s per m', n: true, opt: true }, { h: 'Note', opt: true },
+      { h: 'l/s per m', n: true, opt: true }, { h: 'Bends', n: true, opt: true }, { h: 'Note', opt: true },
     ], x.ducts.slice().sort((a, b) => String(a.ref).localeCompare(String(b.ref), 'en', { numeric: true }))
       .map(d => {
         const up = nodeById(d.up != null ? d.up : d.a), dn = nodeById(d.down != null ? d.down : d.b);
@@ -6409,8 +7272,9 @@ ${(S.ductSystems || []).filter(x => x.ducts.length || x.plant === 'hrv').map(x =
           fmt(d.lengthM, 2), fmt(d.flow, 0), ductSizeLabel(d),
           d.vel > 0 ? fmt(d.vel, 2) : '', d.takeOff > 0 ? fmt(d.takeOff, 0) : '',
           d.nOutlets ? String(d.nOutlets) : '', d.perMetre > 0 ? fmt(d.perMetre, 1) : '',
-          d.note || ''];
-      }), ['Total', '', '', '', fmt(x.lengthM, 2)])
+          bendCell(d.fittings), d.note || ''];
+      }), ['Total', '', '', '', fmt(x.lengthM, 2), '', '', '', '', '', '',
+           (x.tees ? plural(x.tees, 'T-piece') + ', ' : '') + plural(x.elbows || 0, 'elbow')])
   + (x.outlets.length ? repTable([
       { h: 'Outlet', cls: 'key' }, { h: 'Air' }, { h: 'Grille' }, { h: 'Face', opt: true },
       { h: 'Type or model', opt: true },
@@ -6786,7 +7650,8 @@ async function exportXlsx() {
   const pipe = [[HD('Section'), HD('System'), HD('From'), HD('To'), HD('Pipes'), HD('Plan m'),
     HD('Rise m'), HD('One way m'), HD('Pipe m'), HD('Height low m'), HD('Height high m'),
     HD('Liquid'), HD('Liquid OD mm'), HD('Gas'), HD('Gas OD mm'), HD('HP gas'), HD('HP gas OD mm'),
-    HD('Insulation'), HD('Insulation m'), HD('Indoor units'), HD('kW'), HD('Note')]];
+    HD('Insulation'), HD('Insulation m'), HD('Indoor units'), HD('kW'),
+    HD('Bends 90'), HD('Bends 45'), HD('Risers'), HD('Elbows'), HD('Note')]];
   const allSegs = (S.systems || []).reduce((acc, st) => acc.concat(st.segs), [])
     .concat(S.segs.filter(s => s.orphan));
   allSegs.forEach(sg => {
@@ -6804,7 +7669,10 @@ async function exportXlsx() {
       sg.pipes === 3 ? sizeLabel(sg.sizeHp) : '',
       sg.pipes === 3 && sg.sizeHp ? N2(sizeOd(sg.sizeHp)) : '',
       INSULATION[ins].label, ins === 'none' ? 0 : N2(sg.pipeM),
-      sg.nIndoor || 0, N2(sg.kw || 0), sg.note || '']);
+      sg.nIndoor || 0, N2(sg.kw || 0),
+      (sg.fittings || {}).b90 || 0, (sg.fittings || {}).b45 || 0,
+      (sg.fittings || {}).risers || 0, (sg.fittings || {}).elbows || 0,
+      sg.note || '']);
   });
   pipe.push([B('Total'), '', '', '', '', NB(t.routeM), NB(t.riseM), NB(t.lengthM), NB(t.pipeM)]);
 
@@ -6910,7 +7778,7 @@ async function exportXlsx() {
   const duct = [[HD('Section'), HD('Unit'), HD('Air'), HD('From'), HD('To'), HD('Length m'),
     HD('Carries l/s'), HD('Shape'), HD('Size mm'), HD('Free area m2'), HD('Velocity m/s'),
     HD('Off this section l/s'), HD('Outlets'), HD('Per outlet l/s'), HD('Sock'),
-    HD('l/s per metre'), HD('Height m aff'), HD('Note')]];
+    HD('l/s per metre'), HD('Height m aff'), HD('Bends 90'), HD('Bends 45'), HD('Risers'), HD('Elbows'), HD('Note')]];
   (S.ductSystems || []).forEach(x => {
     x.ducts.slice().sort((a, b) => String(a.ref).localeCompare(String(b.ref), 'en', { numeric: true }))
       .forEach(d => {
@@ -6924,7 +7792,10 @@ async function exportXlsx() {
           d.takeOff > 0 ? N2(d.takeOff) : '', d.nOutlets || '',
           d.perOutlet > 0 ? N2(d.perOutlet) : '', d.sock ? 'yes' : '',
           d.perMetre > 0 ? N2(d.perMetre) : '',
-          N2(vertexH(d, 0)), d.note || '']);
+          N2(vertexH(d, 0)),
+          (d.fittings || {}).b90 || 0, (d.fittings || {}).b45 || 0,
+          (d.fittings || {}).risers || 0, (d.fittings || {}).elbows || 0,
+          d.note || '']);
       });
   });
   S.ducts.filter(d => d.orphan).forEach(d =>
@@ -6961,7 +7832,7 @@ async function exportXlsx() {
   const vent = [[HD('HRV'), HD('Model'), HD('Design speed'), HD('Design l/s'), HD('Pa'),
     HD('Low l/s'), HD('Med l/s'), HD('High l/s'), HD('Open return'),
     HD('OA l/s'), HD('EA l/s'), HD('SA l/s'), HD('RA l/s'),
-    HD('Duct m'), HD('Outlets'), HD('Rooms')]];
+    HD('Duct m'), HD('Outlets'), HD('T-pieces'), HD('Elbows'), HD('Rooms')]];
   (S.ductSystems || []).filter(x => x.plant === 'hrv').forEach(x => {
     const n = x.unit;
     const rooms = (x.rooms || []).filter(r => r.room !== '(no room)')
@@ -6973,7 +7844,7 @@ async function exportXlsx() {
       x.streams.ea ? NB(x.streams.ea.delivered) : '',
       x.streams.sa ? NB(x.streams.sa.delivered) : '',
       x.streams.ra ? NB(x.streams.ra.delivered) : '',
-      N2(x.lengthM), x.nOutlets, rooms]);
+      N2(x.lengthM), x.nOutlets, x.tees || 0, x.elbows || 0, rooms]);
   });
 
   /* ---- Controllers ---- */
@@ -7257,7 +8128,7 @@ function rotateDrawing(deg) {
       const ny = x * si + y * co + nh / 2;
       p.x = nx; p.y = ny;
     };
-    pushUndo('rotate the drawing ' + fmt(d, 0) + '°');
+    pushUndo('rotate the drawing ' + fmt(d, 0) + '°', { img: S.img, rotation: S.rotation });
     S.nodes.forEach(move);
     S.segs.forEach(sg => sg.pts.forEach(move));
     (S.ducts || []).forEach(d => d.pts.forEach(move));
@@ -7314,6 +8185,11 @@ function rotateDialog() {
 const AUTO_KEY = 'adi-ac-trace-autosave';
 const AUTO_IMG_KEY = 'adi-ac-trace-autosave-img';
 let autoTimer = null;
+/* The drawing that is already in the browser store. It is megabytes, and it
+   was being serialised and written again a second after every change — every
+   drag, every keystroke in a name — which is a stall on the main thread each
+   time, and a thrown quota error each time it did not fit. Once is enough. */
+let autosavedImgSrc = null;
 
 function projectBundle(withImg) {
   const out = JSON.parse(JSON.stringify({
@@ -7330,12 +8206,8 @@ function projectBundle(withImg) {
     delete n.reached; delete n.sysId; delete n.depth; delete n.unitId;
     delete n.flow; delete n.auto; delete n.faceVel; delete n.faceArea;
   });
-  out.segs.forEach(s => ['up', 'down', 'parentSeg', 'depth', 'orphan', 'sysId', 'afterBc',
-    'kw', 'nIndoor', 'routeM', 'rise', 'riseM', 'lengthM', 'pipes', 'pipeM', 'role']
-    .forEach(k => delete s[k]));
-  (out.ducts || []).forEach(d => ['up', 'down', 'orphan', 'unitId', 'lengthM', 'routeM', 'rise', 'riseM',
-    'flow', 'takeOff', 'vel', 'area', 'nOutlets', 'perOutlet', 'perMetre']
-    .forEach(k => delete d[k]));
+  out.segs.forEach(s => DERIVED_RUN.forEach(k => delete s[k]));
+  (out.ducts || []).forEach(d => DERIVED_RUN.forEach(k => delete d[k]));
   return out;
 }
 
@@ -7348,8 +8220,10 @@ function autosave() {
       localStorage.setItem(AUTO_KEY, JSON.stringify({
         at: Date.now(), ref: S.ref, project: projectBundle(false) }));
     } catch (e) { return; }
+    if (!S.img || S.img.src === autosavedImgSrc) return;
+    autosavedImgSrc = S.img.src;
     try {
-      if (S.img) localStorage.setItem(AUTO_IMG_KEY, JSON.stringify(S.img));
+      localStorage.setItem(AUTO_IMG_KEY, JSON.stringify(S.img));
     } catch (e) {
       try { localStorage.removeItem(AUTO_IMG_KEY); } catch (e2) {}
     }
@@ -7369,6 +8243,7 @@ function readAutosave() {
   } catch (e) { return null; }
 }
 function clearAutosave() {
+  autosavedImgSrc = null;
   try { localStorage.removeItem(AUTO_KEY); localStorage.removeItem(AUTO_IMG_KEY); } catch (e) {}
 }
 
@@ -7457,9 +8332,10 @@ function loadProject(data) {
   ductHeight = S.settings.ductHeight || 3.4;
   armedIndoor = S.settings.defaultIndoor || 'cass600';
   armedSystem = S.settings.defaultSystem || 'vrf2';
+  refreshLabelBtn();
   undoStack.length = 0; refreshUndoBtn();
   if (data.img) { S.img = data.img; showDrawing({}); }
-  sel = null; closeInspector();
+  sel = null; draft = null; drag = null; marquee = null; closeInspector();
   buildRail(); render();
   toast('Opened ' + esc(S.ref || 'the take-off'));
 }
@@ -7503,6 +8379,8 @@ function projectDialog() {
     + 'run, carries its own height and can be changed from the inspector.</div>'
     + '<label class="fld"><span>Default indoor duty <em>kW, on a new unit</em></span>'
     + '<input type="number" id="pKw" step="0.1" value="' + s.defaultKw + '"></label>'
+    + '<label class="fld"><span>Ceiling grid <em>metres — Shift while dragging steps a move by this</em></span>'
+    + '<input type="number" id="pGrid" step="0.05" min="0.05" value="' + fmt(s.gridM || 0.6, 2) + '"></label>'
     + '<label class="fld"><span>Insulation <em>wall thickness a section gets unless it says otherwise</em></span>'
     + '<select id="pIns">'
     + INSULATION_ORDER.map(k2 => '<option value="' + k2 + '"'
@@ -7526,6 +8404,18 @@ function projectDialog() {
     + chk('pHShow', s.showHeights !== false, 'Show heights and risers',
         'The height each section runs at, and a marker with the change wherever it steps.')
     + chk('pTShow', s.showTypes !== false, 'Show unit type', 'WM, CC9, CC6, DU or U1 under each indoor unit.')
+    + '<label class="fld" style="margin-top:8px"><span>Labels on the plan</span><select id="pLabels">'
+    + LABEL_MODES.map(m => '<option value="' + m.key + '"' + ((s.labels || 'auto') === m.key ? ' selected' : '') + '>'
+        + esc(m.title.split(' (')[0].replace('Labels: ', '')) + '</option>').join('')
+    + '</select></label>'
+    + '<div class="note">Automatic keeps names and lengths only when the plan is zoomed out past about 22 px '
+    + 'to the metre, so a whole floor stays readable. The <b>Aa</b> button beside the zoom cycles the same '
+    + 'three. Reports always carry everything.</div>'
+    + chk('pTrue', s.trueSize !== false, 'Draw units and ducts at true size',
+        'Every unit is its real footprint and every sized duct its real width at every zoom, in the 3D view '
+        + 'and on both report plates — so a 600 cassette sits on its tile and a run of ducts reads against '
+        + 'the grid however far out you are. Off, a unit zoomed right out is grown to a legible minimum and '
+        + 'a duct band is capped; the reports and 3D follow the same rule. Neither changes a length.')
     + (S.calib
         ? '<div style="margin-top:10px"><button class="btn ghost sm" type="button" id="pHideCal">Hide the scale mark</button>'
           + '<div class="note" style="margin-top:8px">The dashed line from when the scale was set. It is not a tape. Hiding it keeps the scale.</div></div>'
@@ -7553,6 +8443,10 @@ function projectDialog() {
     s.showKw = el('pKwShow').checked;
     s.showHeights = el('pHShow').checked;
     s.showTypes = el('pTShow').checked;
+    s.trueSize = el('pTrue').checked;
+    s.labels = el('pLabels').value;
+    s.gridM = parseFloat(el('pGrid').value) > 0 ? parseFloat(el('pGrid').value) : 0.6;
+    refreshLabelBtn();
     S.setupDone = true;
     traceHeight = s.pipeHeight;
     ductHeight = s.ductHeight;
@@ -7572,101 +8466,291 @@ function projectDialog() {
 }
 
 /* ==========================================================================
-   HOW TO USE
+   HELP
+   One list of tips is the whole of the documentation inside the tool. It is
+   drawn three ways: as the start page under the drop zone, so someone opening
+   the file cold can read how it works before loading a sheet; as the Help
+   pane, searchable and open at any time beside the drawing, with the tips for
+   the armed tool marked; and as How to use, the same tips in order with what
+   has already been done ticked off. Change a tip here and all three change.
+   `tool` says which armed tools a tip is about; `done` says when a step has
+   been taken on this job.
    ========================================================================== */
-function stepsDialog() {
-  const done = {
-    job: !!S.ref,
-    dwg: !!S.img,
-    scale: S.pxPerM > 0,
-    cond: S.nodes.some(n => n.type === 'condenser'),
-    indoor: S.nodes.some(n => n.type === 'indoor'),
-    traced: S.segs.length > 0,
-  };
-  const step = (ok, title, txt) =>
-    '<li class="' + (ok ? 'done' : '') + '"><span class="num">' + (ok ? '✓' : '•') + '</span>'
-    + '<span class="txt"><b>' + title + '</b>' + txt + '</span></li>';
+const HELP = [
+  { id: 'start', title: 'Getting started', tips: [
+    { id: 'load', t: 'Load the layout', b: '<b>Open layout</b> takes a PDF (its first page) or an image — or drop '
+      + 'the file on the board. <b>Change layout</b> swaps the sheet behind a take-off already drawn and asks '
+      + 'whether the scale still holds, so a revision at the same scale does not throw the work away.',
+      done: () => !!S.img },
+    { id: 'rotate', t: 'Square it up', b: '<b>Rotate</b> turns the sheet and everything traced on it together — '
+      + '90° at a time, or a fine angle for a scan that is not square. The scale does not change. Undo turns '
+      + 'the sheet back as well as the trace. Get it square in one go where you can: each turn re-renders the bitmap.' },
+    { id: 'scale', t: 'Set the scale', tool: ['calib'], b: 'Nothing can be placed or traced until the drawing has a '
+      + 'scale — a length off an uncalibrated drawing means nothing. <b>Scale</b> <kbd>S</kbd>: click two points a '
+      + 'known distance apart (a grid line, a bay, a dimension already printed) and type the real figure in metres. '
+      + 'The longer the reference, the smaller the error. The dashed mark is only a reminder of the two points: '
+      + 'select it and press Delete to hide it and the scale stays.', done: () => S.pxPerM > 0 },
+    { id: 'job', t: 'Job and defaults', b: 'The job reference, client, engineer and refrigerant for the reports; the '
+      + 'heights a new unit, pipe run and duct start at; the ceiling grid; the corner lock; and what is written on '
+      + 'the plan. Every figure here is only a starting figure — everything on the drawing carries its own.',
+      done: () => !!S.ref },
+    { id: 'files', t: 'Saving, opening, autosave', b: '<b>Save</b> <kbd>Ctrl</kbd>+<kbd>S</kbd> writes the whole '
+      + 'take-off, drawing included, as a <span class="mono">.json</span> that <b>Open</b> reads back. The take-off '
+      + 'is also kept in this browser after every change and offered back on the next visit.' },
+  ] },
+  { id: 'place', title: 'Placing the plant', tips: [
+    { id: 'cond', t: 'Condensers', tool: ['condenser'], b: '<b>Cond</b> <kbd>C</kbd>. Pick the system type first — '
+      + 'simple split, multi, twin, triple, VRF 2-pipe with branch joints, VRF 2-pipe with a BC controller, or VRF '
+      + '3-pipe with a BC box before each unit — then click where it sits. The type decides what Check allows and '
+      + 'how many pipes each section carries.', done: () => S.nodes.some(n => n.type === 'condenser') },
+    { id: 'indoor', t: 'Indoor units', tool: ['indoor'], b: '<b>Indoor</b> <kbd>I</kbd>. Wall, 900 or 600 cassette, '
+      + 'ducted, or 1-way blow underslung. What is armed stays armed, so a floor of cassettes is a row of clicks. '
+      + 'Each is drawn at its real footprint. On a 2-pipe BC or a 3-pipe system, place the BC boxes too.',
+      done: () => S.nodes.some(n => n.type === 'indoor') },
+    { id: 'bc', t: 'BC boxes', tool: ['bc'], b: '<b>BC box</b> <kbd>B</kbd>. On a 2-pipe BC system the controller '
+      + 'sits between the condenser and the units it serves, each unit on its own two-pipe run from the box. On a '
+      + '3-pipe system a single BC box sits immediately before each indoor unit: three pipes reach it, two leave.' },
+    { id: 'size', t: 'Size and turn a unit', tool: ['select'], b: 'Select a unit and drag its corner handles to the '
+      + 'size it really is, or the arm above it to turn it to any angle. <kbd>Shift</kbd> keeps the shape, or snaps '
+      + 'the angle to 15°. Or type the figures in the inspector. The pipe lands where you clicked it on the casing, '
+      + 'so a connection on the side of a big unit is real metres. The handles appear once the box is big enough on '
+      + 'screen to hold them — zoom in to resize a small unit.' },
+    { id: 'truesize', t: 'True size', b: 'Units and sized ducts are drawn at their real size at every zoom, in 3D '
+      + 'and on both report plates, so a 600 cassette sits on its tile and a run of ducts reads against the grid. '
+      + 'Job &amp; defaults can turn it off to get a legible minimum when zoomed right out.' },
+  ] },
+  { id: 'pipe', title: 'Tracing the pipe', tips: [
+    { id: 'trace', t: 'Trace a route', tool: ['trace'], b: '<b>Trace</b> <kbd>T</kbd>. Start on a unit, a joint or a '
+      + 'corner and click along the route. Finish anywhere on a unit and the pipe connects at that point — click '
+      + 'near the middle and it snaps to the centre. <b>Double-click</b>, <kbd>Enter</kbd> or <b>Finish</b> stops in '
+      + 'mid-air and leaves a joint to carry on from. Nothing goes on the sheet until the run is finished, so '
+      + '<kbd>Esc</kbd> leaves the drawing exactly as it was.', done: () => S.segs.length > 0 },
+    { id: 'height', t: 'Heights and risers', tool: ['trace', 'duct'], b: 'Every point carries its own height. Change '
+      + 'the height in the bar — or press <kbd>[</kbd> and <kbd>]</kbd> — before a click and that point starts a '
+      + 'riser; a marker with the change is drawn on the plan and the rise is in every length. The inspector lists '
+      + 'a height per point, with <b>Level the whole run</b> and <b>Set all to…</b>. Pipe and duct keep their own '
+      + 'tracing height, because the duct usually runs above the pipe.' },
+    { id: 'corners', t: 'Square corners and Alt', tool: ['trace', 'duct', 'tape'], b: 'Corners lock to horizontal, '
+      + 'vertical and 45° by default; <kbd>O</kbd> toggles it and the status strip always says which way it is set. '
+      + 'Hold <kbd>Alt</kbd> for one free corner (or one square one). Over a run already traced, <kbd>Alt</kbd> cuts '
+      + 'a joint exactly where the cursor is instead of pulling to the nearest corner. The angle badge in the bar '
+      + 'turns accent-coloured the moment a leg is off the square.' },
+    { id: 'joint', t: 'Joints and T-pieces', tool: ['joint'], b: '<b>T-piece</b> <kbd>J</kbd> cuts a joint into a '
+      + 'pipe or a duct already traced, so a branch can leave from there. A joint cut mid-run takes the height the '
+      + 'run is at there. Deleting a joint with two sections on it heals them back into one; three or more asks first.' },
+    { id: 'snap', t: 'Snapping', tool: ['trace', 'duct'], b: 'A run only joins something that is already a point — a '
+      + 'unit, a joint or a traced corner — and only pulls to it when you are near. What the click will connect to '
+      + 'is ringed and named before you click. While tracing a duct, a click on a duct already drawn cuts a T rather '
+      + 'than leaving a corner that only looks joined.' },
+    { id: 'lengths', t: 'What the three lengths mean', b: '<b>Plan route</b> is the polyline on the drawing. '
+      + '<b>Rise</b> is every vertical — on to the pipe, each change of height, the drop on to the unit. '
+      + '<b>One direction</b> is plan plus rise: the installed route, the headline figure, and what a manufacturer’s '
+      + 'selection asks for. <b>Pipe metres</b> is one direction times the pipes the section carries. Bends and '
+      + 'risers are counted as well, as the elbows the sizing will want.' },
+    { id: 'names', t: 'How sections are named', b: '<span class="mono">M1, M2</span> mains from a condenser; '
+      + '<span class="mono">B1, B2</span> branches; <span class="mono">B1a, B1b</span> sub-branches; a run cut by '
+      + 'joints is numbered from the condenser, <span class="mono">M1.1, M1.2</span>; <span class="mono">X1</span> '
+      + 'anything not connected. Counters run across the whole drawing so no two sections share a name. '
+      + '<b>Rename sections</b> renumbers the lot; any section can be given its own name in the inspector.' },
+  ] },
+  { id: 'air', title: 'Ductwork and air', tips: [
+    { id: 'fan', t: 'Ducted unit air volumes', b: 'Select a ducted unit and type low, medium and high as l/s or m³/h, '
+      + 'with the Pa each drives against, straight off the unit data. Tick the speed the ductwork is set out at: '
+      + 'that figure is the stream total, supply and extract each.' },
+    { id: 'duct', t: 'Trace a duct', tool: ['duct'], b: '<b>Duct</b> <kbd>D</kbd>. Pick the air — outdoor, exhaust, '
+      + 'supply, return — then start on a ducted unit, an HRV, or anywhere on the sheet. Finish on an outlet, a '
+      + 'heater or a duct already traced (that cuts a T). <b>Double-click</b> to stop in mid-air; drop an outlet on '
+      + 'the loose end afterwards and it becomes the grille.', done: () => S.ducts.length > 0 },
+    { id: 'outlet', t: 'Outlets and grilles', tool: ['outlet'], b: '<b>Outlet</b> <kbd>O</kbd>. Pick the air and the '
+      + 'grille — circular, 600×600, egg crate, open return, external louvre — and click where it sits. Leave the '
+      + 'volume at 0 to share the stream; type a rate to pin it and the rest re-share. The grille face turns its '
+      + 'l/s into a face velocity.' },
+    { id: 'share', t: 'How air is shared', b: 'A T-piece splits the stream between the legs past it: two equal supply '
+      + 'grilles each take half, and the same on return. A section can carry a count of outlets with a total against '
+      + 'it instead of placing each one. <b>Ventilated sock</b> spreads a typed total along the whole length and '
+      + 'reports l/s per metre. Every section rolls up what it carries.' },
+    { id: 'dsize', t: 'Duct sizes and velocity', b: 'Give a section a diameter or a width × height and the velocity '
+      + 'comes with it. <b>Use Ø…</b> suggests a round size at about 4 m/s — it suggests only; sizing ductwork is '
+      + 'another job. Check calls out anything under 2 or over 8 m/s in a duct, under 1 or over 3 m/s at a face.' },
+    { id: 'dlen', t: 'Set a duct’s length', tool: ['select'], b: 'Select a duct — or a pipe section ending at a '
+      + 'mid-air joint — and a square handle appears on its far end. Drag it along the run (<kbd>Shift</kbd> steps '
+      + '50 mm) or type <b>Plan length</b> in the inspector. The fed end never moves and the outlet comes with the far '
+      + 'end, which is how every run off a row of fan coils is made the same length. An end on a unit or a shared '
+      + 'joint is fixed: move the unit or the joint instead.' },
+    { id: 'fittings', t: 'Bends and T-pieces', b: 'Every section reports its fittings: bends on plan (90° and 45°), '
+      + 'risers (two elbows each), and the total as elbows. Each air system totals its T-pieces and elbows. They are '
+      + 'counted for whoever sizes the ductwork or the pipe; nothing here uses them in a length.' },
+  ] },
+  { id: 'hrv', title: 'Heat recovery', tips: [
+    { id: 'hrv', t: 'HRV', tool: ['hrv'], b: '<b>HRV</b> <kbd>R</kbd> places a standalone heat-recovery box — never on a '
+      + 'refrigerant system. Type low, medium and high, tick the speed, then trace four airs: outdoor and exhaust to '
+      + 'louvres, supply and return to the rooms. Sections are named <span class="mono">OA1, EA1, SA1, RA1</span>. '
+      + 'Tick <b>Open return</b> when the unit itself is the return and Check stops asking for an RA duct.',
+      done: () => S.nodes.some(n => n.type === 'hrv') },
+    { id: 'heater', t: 'Inline heater', tool: ['hrv'], b: 'Pick <b>Inline heater</b> on the HRV palette and drop it on '
+      + 'the outdoor-air duct; it sits in the line. Deleting it heals the run. Check expects it on outdoor air.' },
+  ] },
+  { id: 'ctl', title: 'Controllers', tips: [
+    { id: 'ctl', t: 'Controllers', tool: ['ctl'], b: '<b>Control</b> <kbd>K</kbd> places a local controller, a central '
+      + 'controller or a BMS interface wherever it goes — one for the lot, or one a room. Tick the indoor units and '
+      + 'HRVs it drives; selecting it draws a leader to each of them. It is on neither network.',
+      done: () => S.nodes.some(n => n.type === 'controller') },
+  ] },
+  { id: 'sel', title: 'Selecting, moving and copying', tips: [
+    { id: 'lasso', t: 'Lasso', tool: ['select'], b: 'With <b>Select</b> <kbd>V</kbd> armed, drag a box on open paper '
+      + 'to pick up everything inside it — a fan coil with its ducts and grilles, say. A unit counts by its centre; '
+      + 'a run when all of it is inside, or when both of its end units are. <kbd>Shift</kbd>-click adds one thing or '
+      + 'takes it out; <kbd>Ctrl</kbd>+<kbd>A</kbd> selects everything; <kbd>Esc</kbd> clears.' },
+    { id: 'move', t: 'Moving', tool: ['select'], b: 'Drag any selected thing and the whole selection moves; runs whose '
+      + 'other end was not selected stretch to keep up. Hold <kbd>Shift</kbd> while dragging to step by the ceiling '
+      + 'grid (0.60 m unless Job &amp; defaults says otherwise). Arrow keys nudge by 50 mm, <kbd>Shift</kbd> + arrow '
+      + 'by 0.5 m. <b>Move by</b> in the inspector moves an exact distance.' },
+    { id: 'dup', t: 'Duplicate', tool: ['select'], b: '<b>Duplicate</b> in the inspector, or <kbd>Ctrl</kbd>+<kbd>D</kbd>, '
+      + 'sets a copy down beside the original with new names and its own duct runs, still selected, ready to drag '
+      + 'into place. A run whose other end was not selected gets a joint at that end in the copy.' },
+    { id: 'clip', t: 'Copy and paste — on to the next floor too', tool: ['select'], b: '<kbd>Ctrl</kbd>+<kbd>C</kbd> '
+      + 'copies the selection to a clipboard kept in metres, so it survives <b>Change layout</b> and a different scale. '
+      + '<kbd>Ctrl</kbd>+<kbd>V</kbd> pastes it under the cursor (or in the middle of the view) on whatever sheet is '
+      + 'loaded — one floor’s fan coil set-out stamped on to the next.' },
+    { id: 'del', t: 'Delete and undo', b: '<kbd>Delete</kbd> removes what is selected — one thing or a whole lasso. '
+      + 'Deleting a unit takes its runs with it; deleting a joint between two sections heals them. '
+      + '<b>Undo</b> <kbd>Ctrl</kbd>+<kbd>Z</kbd> goes back a step at a time, a rotation of the sheet included.' },
+  ] },
+  { id: 'measure', title: 'Measuring', tips: [
+    { id: 'tape', t: 'Tape measure', tool: ['tape'], b: '<b>Tape</b> <kbd>M</kbd> measures on the plan without putting '
+      + 'a pipe or a duct down. Click along the route, change direction at a corner, double-click or <b>Finish</b> to '
+      + 'keep it. Select it to delete it or drop a corner. Plan metres only — not a pipe run and not a rise.',
+      done: () => (S.measures || []).length > 0 },
+  ] },
+  { id: 'view', title: 'Views and labels', tips: [
+    { id: 'zoom', t: 'Zoom and pan', tool: ['pan'], b: '<kbd>Ctrl</kbd> + wheel zooms about the cursor; <b>+</b>, '
+      + '<b>−</b> and <b>Fit</b> are in the corner. <b>Pan</b> <kbd>H</kbd>, the middle button, or <kbd>Shift</kbd>-drag '
+      + 'on open paper moves around the sheet.' },
+    { id: 'labels', t: 'Labels', b: 'The <b>Aa</b> button beside the zoom cycles what is written on the plan: '
+      + 'automatic (names and lengths only when zoomed out past about 22 px to the metre, so a whole floor stays '
+      + 'readable), everything, or nothing but the warnings. Reports always carry everything.' },
+    { id: '3d', t: '3D view', b: 'Iso, front, side and plan; drag to orbit, <kbd>Shift</kbd>-drag to pan; ×2 to ×8 '
+      + 'vertical exaggeration to read small height differences. Every unit stands at its height and real footprint, '
+      + 'sized ducts are boxes, and the staff reads the heights off. Read-only — go back to the plan to change anything.' },
+  ] },
+  { id: 'out', title: 'Check, sizes and reports', tips: [
+    { id: 'check', t: 'Check', b: '<b>Check</b> reads every system against its own type — a multi split sharing a '
+      + 'section, a twin split tee’d unequally, a 3-pipe VRF missing a BC box — and every HRV against its four '
+      + 'streams. Run it before the lengths are believed.' },
+    { id: 'sizes', t: 'Line sizes', b: '<b>Schedule → Line sizes</b>. Tick the sections, pick liquid, gas and HP gas '
+      + 'from the sizes refrigerant pipe is actually bought in, and apply them to the lot. Insulation is ½" wall by '
+      + 'default. The Materials sheet in the Excel totals every line by size for ordering.' },
+    { id: 'pdf', t: 'PDF report', b: 'A complete A3 document: summary, system figures, layout plan, 3D plan and '
+      + 'elevation, the schedule by system, ventilation and controllers where there are any. The browser’s own '
+      + '<b>Save as PDF</b> writes the file, so the text stays selectable.' },
+    { id: 'xlsx', t: 'Excel report', b: 'The same figures as a real <span class="mono">.xlsx</span> — Summary, Pipe '
+      + 'sections, Materials, Units, Systems, Check, Ductwork, Outlets, Ventilation, Controllers, and the two plates '
+      + 'as pictures.' },
+    { id: 'nosize', t: 'What it does not do', b: 'It does not size refrigerant pipe, and nothing in it should be read '
+      + 'as if it did. Line sizes come from the manufacturer’s selection against the actual model and the actual run. '
+      + 'This tool measures the route, keeps the heights honest and names every section.' },
+  ] },
+];
+const HELP_KEYS = [
+  ['V H S M', 'select, pan, scale, tape'],
+  ['C I B T J', 'condenser, indoor, BC box, trace, T-piece'],
+  ['D O K R', 'duct, outlet, controller, HRV'],
+  ['Alt', 'held: flip the corner lock, or cut a joint exactly where the cursor is'],
+  ['Shift', 'held: keep a unit’s shape or snap its angle; step a move by the ceiling grid; with a click, add to the selection'],
+  ['O', 'square corners on or off'],
+  ['[ ]', 'lower or raise the height the next point is traced at'],
+  ['Enter / Esc', 'finish or abandon the run being traced; Esc also clears the selection'],
+  ['Arrows', 'nudge what is selected 50 mm; with Shift, 0.5 m'],
+  ['Ctrl+Z', 'undo'],
+  ['Ctrl+S', 'save the take-off'],
+  ['Ctrl+A', 'select everything on the sheet'],
+  ['Ctrl+D', 'duplicate what is selected'],
+  ['Ctrl+C / Ctrl+V', 'copy the selection; paste it here or on the next layout'],
+  ['Delete', 'delete what is selected'],
+  ['Ctrl + wheel', 'zoom'],
+  ['? or F1', 'this help'],
+];
 
+function helpTipHtml(tip, secId, cls) {
+  return '<div class="tip' + (cls ? ' ' + cls : '') + '" id="tip-' + secId + '-' + tip.id + '" data-tools="'
+    + (tip.tool || []).join(' ') + '"><h4>' + tip.t + '</h4><p>' + tip.b + '</p></div>';
+}
+function helpKeysHtml() {
+  return '<table class="mini keys-tbl"><tbody>'
+    + HELP_KEYS.map(r => '<tr><td class="mono">' + esc(r[0]) + '</td><td>' + esc(r[1]) + '</td></tr>').join('')
+    + '</tbody></table>';
+}
+function helpMatches(tip, q) {
+  if (!q) return true;
+  const hay = (tip.t + ' ' + tip.b).replace(/<[^>]+>/g, ' ').toLowerCase();
+  return q.split(/\s+/).filter(Boolean).every(w => hay.indexOf(w) >= 0);
+}
+
+/* ---- the start page ---- */
+function buildBoardHelp() {
+  const box = el('boardHelp');
+  if (!box) return;
+  box.innerHTML = '<h2>How it works — every tip, also under <b>? Help</b> at any time</h2>'
+    + '<div class="help-grid">'
+    + HELP.map(sec => '<div class="help-sec"><h3>' + sec.title + '</h3>'
+        + sec.tips.map(t => helpTipHtml(t, 'b' + sec.id)).join('') + '</div>').join('')
+    + '<div class="help-sec keys"><h3>Keys</h3>' + helpKeysHtml() + '</div>'
+    + '</div>';
+}
+
+/* ---- the help pane ---- */
+function renderHelp() {
+  const q = (el('helpQ').value || '').trim().toLowerCase();
+  let html = '';
+  HELP.forEach(sec => {
+    const tips = sec.tips.filter(t => helpMatches(t, q));
+    if (!tips.length) return;
+    html += '<h3 id="help-sec-' + sec.id + '">' + sec.title + '</h3>'
+      + tips.map(t => helpTipHtml(t, sec.id, (t.tool || []).indexOf(tool) >= 0 ? 'now' : '')).join('');
+  });
+  if (!q || 'keys shortcuts keyboard'.indexOf(q) >= 0 || HELP_KEYS.some(r => (r[0] + ' ' + r[1]).toLowerCase().indexOf(q) >= 0)) {
+    html += '<h3 id="help-sec-keys">Keys</h3>' + helpKeysHtml();
+  }
+  if (!html) html = '<div class="empty">Nothing matches “' + esc(q) + '”. Try a shorter word.</div>';
+  el('helpBody').innerHTML = html;
+  el('helpNav').innerHTML = HELP.map(sec => '<button data-sec="' + sec.id + '">' + sec.title + '</button>').join('')
+    + '<button data-sec="keys">Keys</button>';
+  el('helpNav').querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    el('helpQ').value = ''; renderHelp();
+    const h = el('help-sec-' + b.dataset.sec);
+    if (h) h.scrollIntoView({ block: 'start' });
+  }));
+}
+function toggleHelp(on) {
+  const pane = el('helpPane');
+  const want = on === undefined ? !pane.classList.contains('on') : !!on;
+  pane.classList.toggle('on', want);
+  if (want) {
+    el('helpQ').value = '';
+    renderHelp();
+    // the armed tool's tips first, so the help opens on what you are doing
+    const now = el('helpBody').querySelector('.tip.now');
+    if (now) now.scrollIntoView({ block: 'start' });
+    else el('helpBody').scrollTop = 0;
+  }
+}
+
+/* ---- How to use: the same tips in order, with the job's progress ---- */
+function stepsDialog() {
+  const step = (tip) => {
+    const has = typeof tip.done === 'function';
+    const ok = has && tip.done();
+    return '<li class="' + (ok ? 'done' : '') + '"><span class="num">' + (ok ? '✓' : '•') + '</span>'
+      + '<span class="txt"><b>' + tip.t + '</b>' + tip.b + '</span></li>';
+  };
   modal('How to use AC Trace',
-      '<ol class="steps">'
-    + step(done.job, 'Name the job', 'Job and defaults sets the reference, the refrigerant and the '
-        + 'heights everything starts at. It all appears on both reports.')
-    + step(done.dwg, 'Load the layout', 'A PDF or an image. The first page of a PDF is used.')
-    + step(done.dwg && S.rotation === 0 ? false : true, 'Square it up',
-        'Rotate turns the sheet — and anything already traced on it — 90° at a time, or by a fine '
-        + 'angle for a scan that is not square.')
-    + step(done.scale, 'Set the scale', 'Two points a known distance apart, then the real dimension. '
-        + 'Nothing can be placed until this is done, because a length off an uncalibrated drawing '
-        + 'means nothing. The dashed mark is only a reminder of those two points — select it and '
-        + 'press Delete to hide it; the scale stays. Changing the layout drops the old mark.')
-    + step(done.cond, 'Place the condensers', 'Pick the system type first — split, multi, twin, triple, '
-        + 'or one of the three VRF arrangements. The type decides what Check will allow.')
-    + step(done.indoor, 'Place the indoor units', 'Wall, 900 or 600 cassette, ducted, or 1-way blow '
-        + 'underslung. Each is drawn at its real size once you are zoomed in far enough to read it. '
-        + 'On a 2-pipe BC or a 3-pipe system, place the BC boxes too.')
-    + step(false, 'Size and turn them to suit the drawing', 'The type’s size is only a starting figure. '
-        + 'Select a unit and drag its corner handles to the size it really is, or the arm above it to turn '
-        + 'it to any angle — not just 45° or 90° — so it sits the way the building does. Hold '
-        + '<b>Shift</b> to keep the shape square, or to snap the angle to 15°. The centre never moves, so '
-        + 'no traced length changes, and the 3D view and both reports follow.')
-    + step(done.traced, 'Trace the pipe', 'Start on a unit, a joint or a corner and click along the '
-        + 'route. <b>Change the height in the bar before a click and that point becomes a riser</b> — '
-        + 'that is how the vertical pipe gets into the length. Finish on whatever the run reaches: '
-        + '<b>click anywhere on a unit and the pipe connects at that point</b>, which is what you want '
-        + 'when the stubs come out of one end of the casing. The last hop onto the unit stays on '
-        + 'the square, and the two or three pipes stay parallel through every corner. Zoom right in '
-        + 'to place it accurately — click near the middle and it snaps to the centre as before.')
-    + step(S.ducts.length > 0, 'Ductwork off a ducted unit', 'Put the unit’s air volumes and '
-        + 'resistances in on its inspector — low, medium and high — as l/s or m³/h, and tick the '
-        + 'speed the ductwork is set out at. That figure is the stream total. A T-piece splits it '
-        + 'between the legs past it, so two equal supply outlets each take half — and the same on '
-        + 'return. Type a volume on a grille to pin that one; the rest re-share. <b>T-piece</b> (J) '
-        + 'cuts into a run already traced so you can branch off it. A section can carry a count of '
-        + 'outlets instead of placing each one, and ticking <b>Ventilated sock</b> spreads a typed '
-        + 'total along the whole length and reports it per metre. Give a section a size and the '
-        + 'velocity comes with it.')
-    + step(S.nodes.some(n => n.type === 'hrv'), 'Heat recovery ventilation',
-        '<b>HRV</b> places a standalone box — not on a refrigerant system. Type low, medium and high '
-        + 'as l/s or m³/h, tick the speed, then trace four airs: outdoor and exhaust to outside, '
-        + 'supply and return to the rooms. Each stream shares among its own outlets — a supply T '
-        + 'halves the air left and right, and the same on return. Type a rate on a grille that '
-        + 'differs. Pick the grille (circular, 600×600, egg crate, open return, louvre). Drop an '
-        + '<b>inline heater</b> on the outdoor-air run if there is one. Tick <b>Open return</b> when '
-        + 'the unit itself is the return. A duct size gives velocity, a grille face gives face velocity.')
-    + step(S.nodes.some(n => n.type === 'controller'), 'Controllers', '<b>Control</b> places one '
-        + 'wherever it goes — one for the lot, or several in different rooms. Tick the units each one '
-        + 'drives; selecting it draws a dashed leader to every one of them.')
-    + step((S.measures || []).length > 0, 'Tape measure',
-        '<b>Tape</b> (M) measures on the plan without putting a pipe or a duct down. Click along '
-        + 'the route, change direction at a corner, and double-click or press <b>Finish</b> to keep '
-        + 'it. Select it to delete it or drop a corner. The figure is the plan length — it is not a '
-        + 'pipe run and it does not include rise.')
-    + step(false, 'Put the line sizes in', 'Schedule → <b>Line sizes</b>. Tick the sections a selection '
-        + 'covers — or a whole system at once — pick the liquid, gas and HP gas sizes and apply them to '
-        + 'the lot. Sizes are the imperial steps refrigerant pipe is actually bought in, 1/4" to 1 5/8". '
-        + 'Insulation is 1/2" wall by default, 3/8" where there is no room for it. All of it goes to '
-        + 'the Excel report, including a Materials sheet totalling every line by size for ordering.')
-    + step(false, 'Check, then report', 'Check reads every refrigerant system against its own type, '
-        + 'and every HRV against its four streams. The PDF report carries the schedule, the layout '
-        + 'plan and the 3D plan; the Excel report carries the same figures as columns you can work with.')
-    + '</ol>'
+      '<p style="margin-top:0;color:var(--ink-soft);font-size:12.5px">Ticks show what has already been done on this '
+    + 'job. Every one of these tips is also under <b>? Help</b>, searchable, while you work.</p>'
+    + HELP.map(sec => '<h4>' + sec.title + '</h4><ol class="steps">' + sec.tips.map(step).join('') + '</ol>').join('')
     + '<div class="note">Line sizes are the manufacturer’s. This tool measures the route, keeps the '
     + 'heights honest and names every section; it does not size refrigerant pipe, and nothing in it '
     + 'should be read as if it did.</div>'
-    + '<h4>Keys</h4>'
-    + '<table class="mini"><tbody>'
-    + '<tr><td class="mono">V H S M C I B T J</td><td>select, pan, scale, tape, condenser, indoor, BC box, trace, T-piece</td></tr>'
-    + '<tr><td class="mono">D O K R</td><td>duct, outlet, controller, HRV</td></tr>'
-    + '<tr><td class="mono">Alt</td><td>held: flip the corner lock, or cut a joint exactly where the cursor is</td></tr>'
-    + '<tr><td class="mono">Shift</td><td>held while dragging a handle: keep a unit’s shape, or snap its angle to 15°</td></tr>'
-    + '<tr><td class="mono">O</td><td>square up on or off</td></tr>'
-    + '<tr><td class="mono">[ ]</td><td>lower or raise the height the next section is traced at</td></tr>'
-    + '<tr><td class="mono">Enter / Esc</td><td>finish or abandon the run being traced</td></tr>'
-    + '<tr><td class="mono">Ctrl+Z</td><td>undo</td></tr>'
-    + '<tr><td class="mono">Ctrl+S</td><td>save the take-off</td></tr>'
-    + '<tr><td class="mono">Delete</td><td>delete what is selected</td></tr>'
-    + '<tr><td class="mono">Ctrl + wheel</td><td>zoom</td></tr>'
-    + '</tbody></table>'
+    + '<h4>Keys</h4>' + helpKeysHtml()
     + '<div style="display:flex;gap:8px;margin-top:14px">'
     + '<button class="btn go" onclick="closeModal(true)">Close</button></div>', false, true);
 }
@@ -7678,14 +8762,33 @@ const sc = el('scroller');
 let panning = null, drag = null;
 let lastClick = null;          // for spotting a double-click ourselves
 
+function startPan(ev) {
+  panning = { sx: ev.clientX, sy: ev.clientY, l: sc.scrollLeft, t: sc.scrollTop };
+  sc.classList.add('down');
+  sc.setPointerCapture(ev.pointerId);
+}
+/* The nearest thing under the cursor with Select armed: a unit if the cursor
+   is on one, otherwise whichever run, tape or the scale mark is closest. */
+function hitAny(p) {
+  const n = hitNode(p);
+  if (n) return { kind: 'node', id: n.id, d: 0 };
+  const cand = [];
+  const h = hitSeg(p);
+  const hd = hitSeg(p, 14, 'duct');
+  const tm = hitMeasure(p, 12);
+  const tc = hitCalib(p, 14);
+  if (h) cand.push({ kind: 'seg', id: h.seg.id, d: h.r.d });
+  if (hd) cand.push({ kind: 'duct', id: hd.seg.id, d: hd.r.d });
+  if (tm) cand.push({ kind: 'tape', id: tm.measure.id, d: tm.r.d });
+  if (tc) cand.push({ kind: 'calib', id: 0, d: tc.d });
+  if (!cand.length) return null;
+  cand.sort((a, b) => a.d - b.d);
+  return cand[0];
+}
+
 sc.addEventListener('pointerdown', ev => {
   if (!S.img || V3.on) return;
-  if (ev.button === 1 || tool === 'pan' || ev.shiftKey) {
-    panning = { sx: ev.clientX, sy: ev.clientY, l: sc.scrollLeft, t: sc.scrollTop };
-    sc.classList.add('down');
-    sc.setPointerCapture(ev.pointerId);
-    return;
-  }
+  if (ev.button === 1 || tool === 'pan' || (ev.shiftKey && tool !== 'select')) { startPan(ev); return; }
   const p = toDwg(ev);
 
   /* Double-click ends a run where it is — worked out here rather than left to
@@ -7694,19 +8797,24 @@ sc.addEventListener('pointerdown', ev => {
      into a `dblclick`, and a pointerdown carries `detail: 0` rather than a
      click count. Both of the obvious ways to catch it therefore do nothing,
      which is exactly how it behaved. Timing and distance are reliable. */
-  if (draft && (draft.kind === 'trace' || draft.kind === 'duct' || draft.kind === 'tape')) {
+  if (tool === 'trace' || tool === 'duct' || tool === 'tape') {
     const now = Date.now();
-    if (lastClick && now - lastClick.t < 450 && dist(lastClick, p) * zoom < 7) {
+    if (draft && lastClick && now - lastClick.t < 450 && dist(lastClick, p) * zoom < 7) {
       lastClick = null;
       finishDraftInPlace();
       return;
     }
+    // recorded for the first click too, so a double-click on open paper
+    // starts and ends a run in one go rather than leaving one hanging
     lastClick = { x: p.x, y: p.y, t: now };
   } else lastClick = null;
 
   if (tool === 'select') {
     /* The handles are tested first: they sit on and just outside the box, and
-       a click on one is never meant for the unit under it. */
+       a click on one is never meant for the unit under it. Tested before the
+       Shift check too — Shift is what keeps a unit's shape while it is
+       dragged, so holding it before the grab must not turn the grab into a
+       pan. */
     const hh = hitHandle(p);
     if (hh) {
       const b = unitBox(hh.node, 1 / zoom);
@@ -7715,24 +8823,41 @@ sc.addEventListener('pointerdown', ev => {
       sc.setPointerCapture(ev.pointerId);
       return;
     }
-    const n = hitNode(p);
-    if (n) {
-      drag = { id: n.id, dx: p.x - n.x, dy: p.y - n.y, moved: false };
+    const he = hitRunEnd(p);
+    if (he) {
+      drag = { runEnd: true, id: he.duct.id, moved: false };
       sc.setPointerCapture(ev.pointerId);
-      select('node', n.id);
       return;
     }
-    const h = hitSeg(p);
-    const hd = hitSeg(p, 14, 'duct');
-    const tm = hitMeasure(p, 12);
-    const tc = hitCalib(p, 14);
-    const cand = [];
-    if (h) cand.push({ d: h.r.d, go: () => select('seg', h.seg.id) });
-    if (hd) cand.push({ d: hd.r.d, go: () => select('duct', hd.seg.id) });
-    if (tm) cand.push({ d: tm.r.d, go: () => select('tape', tm.measure.id) });
-    if (tc) cand.push({ d: tc.d, go: () => select('calib') });
-    if (cand.length) { cand.sort((a, b) => a.d - b.d); cand[0].go(); return; }
-    sel = null; closeInspector();
+    const hit = hitAny(p);
+    /* Shift-click adds to or takes from the selection; Shift on open paper
+       still pans, which is what it has always done. */
+    if (ev.shiftKey) {
+      if (hit && hit.kind !== 'calib') { toggleInSelection(hit.kind, hit.id); return; }
+      startPan(ev); return;
+    }
+    if (hit) {
+      // anything that is part of the current selection picks the lot up
+      if (sel && sel.kind === 'multi' && isSel(hit.kind, hit.id)) {
+        drag = { group: true, ox: p.x, oy: p.y, ax: 0, ay: 0, moved: false };
+        sc.setPointerCapture(ev.pointerId);
+        return;
+      }
+      if (hit.kind === 'node') {
+        const n = nodeById(hit.id);
+        drag = { id: n.id, dx: p.x - n.x, dy: p.y - n.y, x0: n.x, y0: n.y, moved: false };
+        sc.setPointerCapture(ev.pointerId);
+        select('node', n.id);
+        return;
+      }
+      if (hit.kind === 'calib') { select('calib'); return; }
+      select(hit.kind, hit.id);
+      return;
+    }
+    /* Open paper: a drag from here is a lasso; a plain click clears the
+       selection. Which it was is only known when the pointer comes up. */
+    marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, moved: false };
+    sc.setPointerCapture(ev.pointerId);
     return;
   }
 
@@ -7740,13 +8865,13 @@ sc.addEventListener('pointerdown', ev => {
     const t = hitJointAt(p, JOINT_HIT_PX);
     if (!t) { toast('Click along a pipe run or a duct to cut a T-piece into it'); return; }
     const h = t.hit, net = t.net;
-    pushUndo(net === 'duct' ? 'cut a T-piece' : 'cut a joint');
-    undoSuspended = true;
-    const j = splitSegment(h.seg, h.r, net);
-    undoSuspended = false; refreshUndoBtn();
-    if (S.settings.autoName !== false) {
-      if (net === 'duct') autoNameDucts(true); else autoNameSections(true);
-    }
+    const j = asOneUndo(net === 'duct' ? 'cut a T-piece' : 'cut a joint', () => {
+      const jj = splitSegment(h.seg, h.r, net);
+      if (S.settings.autoName !== false) {
+        if (net === 'duct') autoNameDucts(true); else autoNameSections(true);
+      }
+      return jj;
+    });
     select('node', j.id);
     render();
     toast((net === 'duct' ? 'T-piece' : 'Joint') + ' cut into ' + segName(h.seg)
@@ -7785,79 +8910,98 @@ sc.addEventListener('pointerdown', ev => {
     return;
   }
 
-  if (tool === 'duct') {
+  if (tool === 'duct' || tool === 'trace') {
+    const net = tool === 'duct' ? 'duct' : 'pipe';
     if (!draft) {
-      const sn = snapAt(p, null, 'duct');
-      let c = connectAt(sn);
+      const sn = snapAt(p, null, net);
       /* Unlike pipework, a duct may start on open paper. A refrigerant run
          has to come from a condenser or it means nothing; a duct run is often
          drawn before anyone has decided which unit feeds it, and a sock or a
          length of trunking is a legitimate thing to take off on its own. It
          simply carries no air until one end reaches a ducted unit, and Check
-         says so. */
-      if (!c) {
-        const j = { id: nid(), type: 'djoint', x: p.x, y: p.y, height: ductTraceHeight() };
-        S.nodes.push(j);
-        c = { node: j, off: null, at: { x: j.x, y: j.y } };
-      }
-      draft = { kind: 'duct', startNode: c.node.id, startOff: c.off,
-                pts: [{ x: c.at.x, y: c.at.y, h: ductTraceHeight() }] };
+         says so.
+         Nothing is put on the sheet yet, whichever it is: the start is kept
+         as a snap and made real when the run is finished, so a trace that is
+         abandoned leaves the drawing exactly as it was. */
+      if (!sn && net === 'pipe') { toast('Start on a unit, a joint or a corner'); return; }
+      const at = sn ? sn.at : p;
+      draft = { kind: tool, net,
+                startNode: sn && sn.kind === 'node' ? sn.node.id : null,
+                startOff: sn && sn.kind === 'node' ? (sn.off || null) : null,
+                startSnap: sn && sn.kind !== 'node' ? sn : null,
+                pts: [{ x: at.x, y: at.y, h: activeHeight() }] };
       render();
       return;
     }
     /* Skip the start — the live preview already does. Without that, a click
        near the plant (the usual place to finish an outlet) snaps back to
        the start and the tool looks as if it has died. */
-    const sn = snapAt(p, draft.startNode, 'duct');
-    if (sn && !(sn.kind === 'node' && sn.node.id === draft.startNode)) {
-      if (sn.kind === 'node' && sn.node.type === 'indoor' && sn.node.unit !== 'ducted') {
-        toast(esc(sn.node.name) + ' is not a ducted unit — change its type to Ducted to run air off it');
-        return;
-      }
-      const c = connectAt(sn);
-      if (c && c.node.id !== draft.startNode) {
-        draft.pts.push({ x: c.at.x, y: c.at.y, h: ductTraceHeight() });
-        finishDuct(c.node.id, c.off);
-        return;
-      }
-    }
+    if (finishDraftAt(p)) return;
     const prev = draft.pts[draft.pts.length - 1];
     const q = orthoPoint(prev, p);
-    draft.pts.push({ x: q.x, y: q.y, h: ductTraceHeight() });
-    render();
-    return;
-  }
-
-  if (tool === 'trace') {
-    if (!draft) {
-      const sn = snapAt(p);
-      const c = connectAt(sn);
-      if (!c) { toast('Start on a unit, a joint or a corner'); return; }
-      draft = { kind: 'trace', startNode: c.node.id, startOff: c.off,
-                pts: [{ x: c.at.x, y: c.at.y, h: traceHeight }] };
-      render();
-      return;
-    }
-    const sn = snapAt(p, draft.startNode);
-    if (sn && !(sn.kind === 'node' && sn.node.id === draft.startNode)) {
-      const c = connectAt(sn);
-      if (c && c.node.id !== draft.startNode) {
-        draft.pts.push({ x: c.at.x, y: c.at.y, h: traceHeight });
-        finishTrace(c.node.id, c.off);
-        return;
-      }
-    }
-    const prev = draft.pts[draft.pts.length - 1];
-    const q = orthoPoint(prev, p);
-    draft.pts.push({ x: q.x, y: q.y, h: traceHeight });
+    draft.pts.push({ x: q.x, y: q.y, h: activeHeight() });
     render();
   }
 });
 
+/* Pointer moves arrive faster than the sheet can be redrawn, and every
+   redraw solves the whole take-off. Coalescing them to one redraw a frame is
+   what keeps a big job from feeling stuck under the cursor. */
+let renderReq = 0;
+function scheduleRender() {
+  if (renderReq) return;
+  renderReq = requestAnimationFrame(() => { renderReq = 0; render(); });
+}
+
+/* With Shift held, a move steps by the ceiling grid, so a row of units set
+   out on 600 tiles stays on them. The step is applied to the whole distance
+   moved since the grab, not to each mouse event, so it cannot drift. */
+function gridPx() { return (S.settings.gridM > 0 ? S.settings.gridM : 0.6) * (S.pxPerM > 0 ? S.pxPerM : 20); }
+function snapDelta(dx, dy, on) {
+  if (!on) return { x: dx, y: dy };
+  const g = gridPx();
+  return { x: Math.round(dx / g) * g, y: Math.round(dy / g) * g };
+}
+
 sc.addEventListener('pointermove', ev => {
+  if (S.img) lastPointer = toDwg(ev);
   if (panning) {
     sc.scrollLeft = panning.l - (ev.clientX - panning.sx);
     sc.scrollTop  = panning.t - (ev.clientY - panning.sy);
+    return;
+  }
+  // ---- the lasso ----
+  if (marquee) {
+    const p = toDwg(ev);
+    marquee.x1 = p.x; marquee.y1 = p.y;
+    if (!marquee.moved && dist({ x: marquee.x0, y: marquee.y0 }, p) * zoom > 4) marquee.moved = true;
+    if (marquee.moved) scheduleRender();
+    return;
+  }
+  // ---- carrying a whole selection ----
+  if (drag && drag.group) {
+    const p = toDwg(ev);
+    if (!drag.moved) pushUndo('move ' + multiSummary(selAsMulti()));
+    drag.moved = true;
+    const want = snapDelta(p.x - drag.ox, p.y - drag.oy, ev.shiftKey);
+    moveSelection(want.x - drag.ax, want.y - drag.ay);
+    drag.ax = want.x; drag.ay = want.y;
+    scheduleRender();
+    return;
+  }
+  // ---- sliding the free end of a duct along its last leg ----
+  if (drag && drag.runEnd) {
+    const p = toDwg(ev);
+    const d = runById(drag.id);
+    const fe = runFreeEnd(d);
+    if (!d || !fe) return;
+    let t = (p.x - fe.prev.x) * fe.dir.x + (p.y - fe.prev.y) * fe.dir.y;
+    t = Math.max(stubPx() * 0.5, t);
+    if (ev.shiftKey && S.pxPerM > 0) t = Math.round(t / S.pxPerM / 0.05) * 0.05 * S.pxPerM;
+    if (!drag.moved) pushUndo('set the length of ' + segName(d));
+    drag.moved = true;
+    setRunEnd(d, fe, { x: fe.prev.x + fe.dir.x * t, y: fe.prev.y + fe.dir.y * t });
+    scheduleRender();
     return;
   }
   /* ---- resizing or turning the selected unit ----
@@ -7890,7 +9034,7 @@ sc.addEventListener('pointermove', ev => {
     /* The figures are drawn beside the box while it is being dragged, so the
        inspector is left alone until the drag ends rather than being rebuilt
        on every move. */
-    render();
+    scheduleRender();
     return;
   }
   if (drag) {
@@ -7898,24 +9042,27 @@ sc.addEventListener('pointermove', ev => {
     const n = nodeById(drag.id);
     if (n) {
       if (!drag.moved) pushUndo('move ' + (n.name || nodeWord(n)));
-      n.x = p.x - drag.dx; n.y = p.y - drag.dy;
+      const want = snapDelta(p.x - drag.dx - drag.x0, p.y - drag.dy - drag.y0, ev.shiftKey);
+      n.x = drag.x0 + want.x; n.y = drag.y0 + want.y;
       drag.moved = true;
       // the ends of every section follow, each to its own connection point
       syncSegEnds();
-      render();
+      scheduleRender();
     }
     return;
   }
   if (draft || tool === 'trace' || tool === 'duct' || tool === 'joint' || tool === 'tape'
       || PLACE_TOOLS.indexOf(tool) >= 0) {
     setOverride(ev.altKey);
-    hoverPt = toDwg(ev); render();
+    hoverPt = toDwg(ev); scheduleRender();
     return;
   }
   // the handles say what they do before they are grabbed
   if (tool === 'select') {
-    const hh = hitHandle(toDwg(ev));
-    sc.style.cursor = hh ? (hh.handle.kind === 'rot' ? 'grab' : 'nwse-resize') : '';
+    const p = toDwg(ev);
+    const hh = hitHandle(p);
+    sc.style.cursor = hh ? (hh.handle.kind === 'rot' ? 'grab' : 'nwse-resize')
+                    : hitRunEnd(p) ? 'ew-resize' : '';
   }
 });
 
@@ -7926,23 +9073,42 @@ function finishDraftInPlace() {
   if (draft && draft.kind === 'tape') return finishMeasure();
   if (!draft || (draft.kind !== 'trace' && draft.kind !== 'duct')) return false;
   const duct = draft.kind === 'duct';
-  if (draft.pts.length < 2) { draft = null; render(); return true; }
-  const last = draft.pts[draft.pts.length - 1];
-  const j = { id: nid(), type: duct ? 'djoint' : 'branch', x: last.x, y: last.y,
-              height: duct ? ductTraceHeight() : traceHeight };
-  S.nodes.push(j);
-  if (duct) finishDuct(j.id); else finishTrace(j.id);
+  if (draft.pts.length < 2 || !draftLongEnough(null)) { draft = null; render(); return true; }
+  asOneUndo(duct ? 'trace a duct' : 'trace a section', () => {
+    realiseStart();
+    const last = draft.pts[draft.pts.length - 1];
+    const j = { id: nid(), type: duct ? 'djoint' : 'branch', x: last.x, y: last.y,
+                height: last.h !== undefined ? last.h : activeHeight() };
+    S.nodes.push(j);
+    if (duct) finishDuct(j.id); else finishTrace(j.id);
+  });
   return true;
 }
 
 function endPointer(ev) {
   if (panning) { panning = null; sc.classList.remove('down'); }
+  if (marquee) {
+    const m = marquee;
+    marquee = null;
+    if (m.moved) selectInBox(m);
+    else { sel = null; closeInspector(); }
+  }
   if (drag) { if (drag.moved) openInspector(); drag = null; }
   try { sc.releasePointerCapture(ev.pointerId); } catch (e) {}
 }
 sc.addEventListener('pointerup', endPointer);
 sc.addEventListener('pointercancel', endPointer);
 sc.addEventListener('pointerleave', () => { if (hoverPt) { hoverPt = null; render(); } });
+/* Losing the window mid-drag — Alt-Tab, a notification, the file dialog —
+   means the pointer never comes up here. Without this the drag carried on
+   with no button held, everything under the cursor followed the mouse, and
+   the tool looked stuck until the next click. */
+window.addEventListener('blur', () => {
+  const had = drag || panning || marquee;
+  drag = null; panning = null; marquee = null;
+  sc.classList.remove('down');
+  if (had) render();
+});
 
 sc.addEventListener('dblclick', ev => {
   if (!S.img) return;
@@ -7975,6 +9141,12 @@ el('fDwg').addEventListener('change', e => { loadDrawingFile(e.target.files[0]);
 el('bRotate').addEventListener('click', rotateDialog);
 el('bProj').addEventListener('click', projectDialog);
 el('bSteps').addEventListener('click', stepsDialog);
+el('bHelp').addEventListener('click', () => toggleHelp());
+el('helpClose').addEventListener('click', () => toggleHelp(false));
+el('helpQ').addEventListener('input', renderHelp);
+el('helpQ').addEventListener('keydown', ev => {
+  if (ev.key === 'Escape') { if (el('helpQ').value) { el('helpQ').value = ''; renderHelp(); } else toggleHelp(false); }
+});
 el('bUndo').addEventListener('click', undo);
 el('bName').addEventListener('click', () => autoNameSections(false));
 el('bCheck').addEventListener('click', checkDialog);
@@ -8032,6 +9204,7 @@ el('vpalKw').addEventListener('change', e => { S.settings.showKw = e.target.chec
 el('zIn').addEventListener('click', () => setZoom(zoom * 1.25));
 el('zOut').addEventListener('click', () => setZoom(zoom / 1.25));
 el('zFit').addEventListener('click', zoomFit);
+el('zLbl').addEventListener('click', cycleLabels);
 
 /* ---------- dropping a file on the board ---------- */
 ['dragenter', 'dragover'].forEach(t => el('stage').addEventListener(t, ev => {
@@ -8121,12 +9294,31 @@ document.addEventListener('keydown', ev => {
 
   if ((ev.ctrlKey || ev.metaKey) && k === 'z') { ev.preventDefault(); undo(); return; }
   if ((ev.ctrlKey || ev.metaKey) && k === 's') { ev.preventDefault(); saveProject(); return; }
+  if ((ev.ctrlKey || ev.metaKey) && k === 'd') { ev.preventDefault(); if (S.img) duplicateSelection(); return; }
+  if ((ev.ctrlKey || ev.metaKey) && k === 'c') { if (S.img && sel) { ev.preventDefault(); copySelection(); } return; }
+  if ((ev.ctrlKey || ev.metaKey) && k === 'v') { if (S.img) { ev.preventDefault(); pasteClipboard(); } return; }
+  if ((ev.ctrlKey || ev.metaKey) && k === 'a') {
+    if (!S.img) return;
+    ev.preventDefault(); setTool('select'); selectAll(); return;
+  }
   if (ev.ctrlKey || ev.metaKey) return;
 
+  if (ev.key === 'F1' || (k === '?' ) || (k === '/' && ev.shiftKey)) { ev.preventDefault(); toggleHelp(); return; }
+
   if (ev.key === 'Escape') {
+    if (el('helpPane').classList.contains('on')) { toggleHelp(false); return; }
     if (draft) { draft = null; render(); return; }
     if (el('drawer').classList.contains('on')) { el('drawer').classList.remove('on'); return; }
+    if (sel) { sel = null; closeInspector(); return; }
     setTool('select'); return;
+  }
+  if (/^Arrow(Left|Right|Up|Down)$/.test(ev.key) && sel && S.img) {
+    ev.preventDefault();
+    const step = (ev.shiftKey ? 0.5 : 0.05) * (S.pxPerM > 0 ? S.pxPerM : 20);
+    const dx = ev.key === 'ArrowLeft' ? -step : ev.key === 'ArrowRight' ? step : 0;
+    const dy = ev.key === 'ArrowUp' ? -step : ev.key === 'ArrowDown' ? step : 0;
+    nudgeSelection(dx, dy);
+    return;
   }
   if (ev.key === 'Enter' && draft) { finishDraftInPlace(); return; }
   if (ev.key === 'Delete' || ev.key === 'Backspace') { deleteSelected(); return; }
@@ -8157,12 +9349,13 @@ el('modal').addEventListener('click', ev => { if (ev.target === el('modal')) clo
    ========================================================================== */
 (function init() {
   buildRail();
+  buildBoardHelp();
   refreshUndoBtn();
+  refreshLabelBtn();
   el('hgtIn').value = fmt(activeHeight(), 2);
   applyZoom();
-  if (!offerAutosave()) {
-    setTimeout(() => { if (!S.img) stepsDialog(); }, 400);
-  }
+  // the start page carries every instruction, so nothing pops over it
+  offerAutosave();
 })();
 </script>
 </body>
