@@ -2550,9 +2550,6 @@ function render() {
      drawn here so the pipes look as joined as they are. */
   drawPipeJoins(g, k);
 
-  // ---- the free end of the selected duct ----
-  drawRunEndHandle(g, k);
-
   // ---- where a joint would be cut ----
   if (tool === 'joint' && hoverPt) drawJointSnap(g, k);
 
@@ -2626,6 +2623,11 @@ function render() {
 
   // ---- units ----
   S.nodes.forEach(n => drawNode(g, n, k));
+
+  /* ---- the free end of the selected duct ----
+     After the units, because that end usually sits on an outlet and the
+     handle has to be seen over its box to be grabbed. */
+  drawRunEndHandle(g, k);
 
   /* ---- connection points ----
      Drawn after the units, because the box would otherwise cover them. Only
@@ -8201,13 +8203,15 @@ sc.addEventListener('pointerdown', ev => {
      into a `dblclick`, and a pointerdown carries `detail: 0` rather than a
      click count. Both of the obvious ways to catch it therefore do nothing,
      which is exactly how it behaved. Timing and distance are reliable. */
-  if (draft && (draft.kind === 'trace' || draft.kind === 'duct' || draft.kind === 'tape')) {
+  if (tool === 'trace' || tool === 'duct' || tool === 'tape') {
     const now = Date.now();
-    if (lastClick && now - lastClick.t < 450 && dist(lastClick, p) * zoom < 7) {
+    if (draft && lastClick && now - lastClick.t < 450 && dist(lastClick, p) * zoom < 7) {
       lastClick = null;
       finishDraftInPlace();
       return;
     }
+    // recorded for the first click too, so a double-click on open paper
+    // starts and ends a run in one go rather than leaving one hanging
     lastClick = { x: p.x, y: p.y, t: now };
   } else lastClick = null;
 
